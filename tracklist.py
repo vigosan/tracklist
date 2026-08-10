@@ -7,7 +7,10 @@ import hashlib
 import json
 import re
 import shlex
+import subprocess
 import sys
+import tempfile
+import time
 import urllib.error
 import urllib.request
 from http.cookiejar import MozillaCookieJar
@@ -95,6 +98,36 @@ def refresh_headers(headers, cookies, timestamp):
     }
 
 
+def brave_cookies():
+    with tempfile.TemporaryDirectory() as tmp:
+        jar_path = Path(tmp) / "cookies.txt"
+        command = [
+            "yt-dlp", "--quiet", "--no-warnings", "--ignore-errors", "--skip-download",
+            "--cookies-from-browser", "brave", "--cookies", str(jar_path),
+            "https://www.youtube.com/robots.txt",
+        ]
+        try:
+            result = subprocess.run(command, capture_output=True, text=True)
+        except FileNotFoundError:
+            sys.exit("yt-dlp no esta instalado (brew install yt-dlp), o usa --save-session.")
+        if not jar_path.exists():
+            sys.exit(
+                "No se pudieron leer las cookies de Brave:\n"
+                f"{result.stderr.strip()[-300:]}\n"
+                "Alternativa manual: captura un cURL y usa --save-session."
+            )
+        return parse_cookie_file(jar_path)
+
+
+def fresh_session():
+    session = load_session()
+    cookies = brave_cookies()
+    if "SAPISID" not in cookies:
+        sys.exit("Brave no tiene sesion de YouTube iniciada: entra en studio.youtube.com y reintenta.")
+    session["headers"] = refresh_headers(session["headers"], cookies, int(time.time()))
+    return session
+
+
 def post(endpoint, payload, session):
     request = urllib.request.Request(
         endpoint,
@@ -107,7 +140,10 @@ def post(endpoint, payload, session):
             return json.load(response)
     except urllib.error.HTTPError as error:
         if error.code in (401, 403):
-            sys.exit("Sesion caducada: vuelve a capturar el cURL y --save-session.")
+            sys.exit(
+                "YouTube rechazo la sesion: entra en studio.youtube.com con Brave"
+                " y reintenta, o captura un cURL nuevo y usa --save-session."
+            )
         sys.exit(f"Error HTTP {error.code}: {error.read()[:300].decode(errors='replace')}")
 
 
@@ -246,7 +282,7 @@ def main():
     if args.from_json:
         response = json.loads(Path(args.from_json).read_text())
     else:
-        session = load_session()
+        session = fresh_session()
         response = fetch_claims(video_id, session)
         if duration is None:
             info = fetch_videos([video_id], session).get(video_id)
