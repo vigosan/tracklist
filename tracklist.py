@@ -3,6 +3,7 @@
 Content ID que YouTube Studio muestra para un video propio."""
 
 import argparse
+import asyncio
 import hashlib
 import json
 import re
@@ -248,6 +249,75 @@ def merge_samples(samples):
     return suggestions
 
 
+def download_gap(video_id, start, end, directory):
+    command = [
+        "yt-dlp", "--quiet", "--no-warnings", "-x", "--audio-format", "mp3",
+        "--cookies-from-browser", "brave",
+        "--download-sections", f"*{start}-{end}",
+        "-o", str(directory / f"gap-{start}.%(ext)s"),
+        f"https://www.youtube.com/watch?v={video_id}",
+    ]
+    result = subprocess.run(command, capture_output=True, text=True)
+    matches = list(directory.glob(f"gap-{start}.*"))
+    if result.returncode != 0 or not matches:
+        print(f"Aviso: no se pudo descargar el hueco {hhmmss(start)}-{hhmmss(end)}", file=sys.stderr)
+        return None
+    return matches[0]
+
+
+def cut_sample(source, offset, directory):
+    target = directory / f"{source.stem}-{offset}.wav"
+    subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-ss", str(offset), "-t", str(SAMPLE_SECONDS),
+         "-i", str(source), str(target)],
+        check=True, capture_output=True,
+    )
+    return target
+
+
+def recognize_gaps(video_id, gaps):
+    try:
+        from shazamio import Shazam
+        from shazamio.exceptions import FailedDecodeJson
+    except ImportError:
+        sys.exit(
+            "Para --recognize ejecuta con el python del venv:\n"
+            "    .venv/bin/python3 tracklist.py --recognize <video>\n"
+            "Dependencias (una vez): .venv/bin/pip install audioop-lts shazamio==0.4.0.1"
+        )
+
+    async def run():
+        shazam = Shazam()
+        suggestions = []
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            for start, end in gaps:
+                source = download_gap(video_id, start, end, directory)
+                if source is None:
+                    continue
+                samples = []
+                for offset in plan_samples(start, end):
+                    sample = cut_sample(source, offset - start, directory)
+                    try:
+                        result = await shazam.recognize_song(str(sample))
+                    except FailedDecodeJson:
+                        await asyncio.sleep(30)
+                        try:
+                            result = await shazam.recognize_song(str(sample))
+                        except FailedDecodeJson:
+                            result = {}
+                    track = result.get("track")
+                    match = None
+                    if track:
+                        match = {"artist": track.get("subtitle", "?"), "title": track.get("title", "?")}
+                    samples.append((offset, match))
+                    await asyncio.sleep(1)
+                suggestions += merge_samples(samples)
+        return suggestions
+
+    return asyncio.run(run())
+
+
 def hhmmss(seconds):
     hours, rest = divmod(seconds, 3600)
     minutes, secs = divmod(rest, 60)
@@ -292,6 +362,7 @@ def main():
     parser.add_argument("--from-json", metavar="FICHERO", help="usa una respuesta ya guardada")
     parser.add_argument("--duration", type=int, help="duracion total en segundos, para el hueco final")
     parser.add_argument("--label", action="store_true", help="muestra el sello de cada track")
+    parser.add_argument("--recognize", action="store_true", help="identifica los huecos con Shazam")
     args = parser.parse_args()
 
     if args.save_session:
@@ -320,6 +391,9 @@ def main():
     if not entries:
         sys.exit("Sin reclamaciones con timestamp para este video.")
     gaps = find_gaps(entries, duration)
+    if args.recognize and gaps:
+        entries = sorted(entries + recognize_gaps(video_id, gaps), key=lambda entry: entry["start"])
+        gaps = find_gaps(entries, duration)
     print(render(entries, gaps, video_id, args.label, title))
 
 
