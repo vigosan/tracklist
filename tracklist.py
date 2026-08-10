@@ -268,14 +268,18 @@ def render(entries, gaps, video_id, show_label, title=None):
             )
             continue
         line = f"  - {hhmmss(start)} {item['artist']} - {item['title']}"
+        if item.get("suggested"):
+            line += " (?)"
         if show_label and item["label"]:
             line += f"  [{item['label']}]"
         lines.append(line)
     identified = sum(entry["duration"] for entry in entries)
     missing = sum(end - start for start, end in gaps)
+    suggested = sum(1 for entry in entries if entry.get("suggested"))
+    suggested_part = f"{suggested} sugeridos, " if suggested else ""
     lines += [
         "",
-        f"{len(entries)} identificados, {len(gaps)} huecos "
+        f"{len(entries) - suggested} identificados, {suggested_part}{len(gaps)} huecos "
         f"({hhmmss(missing)} sin identificar de {hhmmss(identified + missing)})",
     ]
     return "\n".join(lines)

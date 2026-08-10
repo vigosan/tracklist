@@ -97,5 +97,23 @@ class MergeSamplesTest(unittest.TestCase):
         )
 
 
+class RenderSuggestionsTest(unittest.TestCase):
+    def test_marks_suggested_entries_and_counts_them_separately(self):
+        entries = [
+            {"artist": "A", "title": "T", "label": "", "start": 0, "duration": 60},
+            {"artist": "B", "title": "U", "label": "", "start": 60, "duration": 30, "suggested": True},
+        ]
+        text = tracklist.render(entries, [], "video123456", False)
+        self.assertIn("  - 00:00 A - T\n", text)
+        self.assertIn("  - 01:00 B - U (?)", text)
+        self.assertIn("1 identificados, 1 sugeridos, 0 huecos", text)
+
+    def test_summary_omits_suggestions_when_none(self):
+        entries = [{"artist": "A", "title": "T", "label": "", "start": 0, "duration": 60}]
+        text = tracklist.render(entries, [], "video123456", False)
+        self.assertIn("1 identificados, 0 huecos", text)
+        self.assertNotIn("sugeridos", text)
+
+
 if __name__ == "__main__":
     unittest.main()
