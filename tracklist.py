@@ -3,6 +3,7 @@
 Content ID que YouTube Studio muestra para un video propio."""
 
 import argparse
+import hashlib
 import json
 import re
 import shlex
@@ -12,6 +13,7 @@ import urllib.request
 from pathlib import Path
 
 BASE = "https://studio.youtube.com/youtubei/v1/creator"
+ORIGIN = "https://studio.youtube.com"
 CLAIMS_ENDPOINT = f"{BASE}/list_creator_received_claims?alt=json"
 VIDEOS_ENDPOINT = f"{BASE}/get_creator_videos?alt=json"
 SESSION_FILE = Path.home() / ".config" / "tracklist" / "session.json"
@@ -62,6 +64,20 @@ def load_session():
             "    tracklist --save-session fichero.txt"
         )
     return json.loads(SESSION_FILE.read_text())
+
+
+def build_authorization(cookies, timestamp):
+    def digest(value):
+        return hashlib.sha1(f"{timestamp} {value} {ORIGIN}".encode()).hexdigest()
+
+    return " ".join(
+        f"{scheme} {timestamp}_{digest(cookies[name])}"
+        for scheme, name in (
+            ("SAPISIDHASH", "SAPISID"),
+            ("SAPISID1PHASH", "__Secure-1PAPISID"),
+            ("SAPISID3PHASH", "__Secure-3PAPISID"),
+        )
+    )
 
 
 def post(endpoint, payload, session):
