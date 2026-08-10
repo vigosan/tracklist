@@ -74,5 +74,28 @@ class PlanSamplesTest(unittest.TestCase):
         self.assertEqual(tracklist.plan_samples(0, 24), [])
 
 
+class MergeSamplesTest(unittest.TestCase):
+    def test_consecutive_matches_collapse_into_one_suggestion(self):
+        first = {"artist": "Kate Project", "title": "A Better World"}
+        second = {"artist": "Wand", "title": "Happiness"}
+        samples = [(15, first), (75, first), (135, second)]
+        self.assertEqual(
+            tracklist.merge_samples(samples),
+            [
+                {"artist": "Kate Project", "title": "A Better World", "label": "", "start": 15, "duration": 70, "suggested": True},
+                {"artist": "Wand", "title": "Happiness", "label": "", "start": 135, "duration": 10, "suggested": True},
+            ],
+        )
+
+    def test_missing_result_breaks_a_run(self):
+        match = {"artist": "X", "title": "Y"}
+        samples = [(15, match), (75, None), (135, match)]
+        merged = tracklist.merge_samples(samples)
+        self.assertEqual(
+            [(s["start"], s["duration"]) for s in merged],
+            [(15, 10), (135, 10)],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

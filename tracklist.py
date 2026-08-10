@@ -233,6 +233,21 @@ def plan_samples(start, end):
     return list(range(start + SAMPLE_LEAD, end - SAMPLE_SECONDS + 1, SAMPLE_INTERVAL))
 
 
+def merge_samples(samples):
+    suggestions = []
+    previous = None
+    for offset, match in samples:
+        if match is None:
+            previous = None
+            continue
+        if previous and (previous["artist"], previous["title"]) == (match["artist"], match["title"]):
+            previous["duration"] = offset + SAMPLE_SECONDS - previous["start"]
+            continue
+        previous = {**match, "label": "", "start": offset, "duration": SAMPLE_SECONDS, "suggested": True}
+        suggestions.append(previous)
+    return suggestions
+
+
 def hhmmss(seconds):
     hours, rest = divmod(seconds, 3600)
     minutes, secs = divmod(rest, 60)
