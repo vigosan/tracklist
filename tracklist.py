@@ -87,6 +87,14 @@ def parse_cookie_file(path):
     return {c.name: c.value for c in jar if c.domain.endswith("youtube.com")}
 
 
+def refresh_headers(headers, cookies, timestamp):
+    return {
+        **headers,
+        "cookie": "; ".join(f"{name}={value}" for name, value in cookies.items()),
+        "authorization": build_authorization(cookies, timestamp),
+    }
+
+
 def post(endpoint, payload, session):
     request = urllib.request.Request(
         endpoint,

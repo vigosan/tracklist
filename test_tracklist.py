@@ -45,5 +45,24 @@ class ParseCookieFileTest(unittest.TestCase):
         self.assertEqual(cookies, {"SAPISID": "abc", "SESSION": "xyz"})
 
 
+class RefreshHeadersTest(unittest.TestCase):
+    def test_replaces_auth_and_cookie_but_preserves_the_rest(self):
+        stored = {
+            "cookie": "SAPISID=old",
+            "authorization": "SAPISIDHASH 1_dead",
+            "user-agent": "Mozilla/5.0",
+        }
+        cookies = {
+            "SAPISID": "abc",
+            "__Secure-1PAPISID": "def",
+            "__Secure-3PAPISID": "ghi",
+        }
+        headers = tracklist.refresh_headers(stored, cookies, 1000)
+        self.assertEqual(headers["cookie"], "SAPISID=abc; __Secure-1PAPISID=def; __Secure-3PAPISID=ghi")
+        self.assertEqual(headers["authorization"], tracklist.build_authorization(cookies, 1000))
+        self.assertEqual(headers["user-agent"], "Mozilla/5.0")
+        self.assertEqual(stored["cookie"], "SAPISID=old")
+
+
 if __name__ == "__main__":
     unittest.main()
