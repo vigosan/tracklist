@@ -64,5 +64,15 @@ class RefreshHeadersTest(unittest.TestCase):
         self.assertEqual(stored["cookie"], "SAPISID=old")
 
 
+class PlanSamplesTest(unittest.TestCase):
+    def test_samples_every_interval_while_they_fit(self):
+        self.assertEqual(tracklist.plan_samples(0, 90), [15, 75])
+        self.assertEqual(tracklist.plan_samples(120, 210), [135, 195])
+
+    def test_sample_that_does_not_fit_is_dropped(self):
+        self.assertEqual(tracklist.plan_samples(0, 84), [15])
+        self.assertEqual(tracklist.plan_samples(0, 24), [])
+
+
 if __name__ == "__main__":
     unittest.main()

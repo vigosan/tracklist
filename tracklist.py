@@ -22,6 +22,9 @@ CLAIMS_ENDPOINT = f"{BASE}/list_creator_received_claims?alt=json"
 VIDEOS_ENDPOINT = f"{BASE}/get_creator_videos?alt=json"
 SESSION_FILE = Path.home() / ".config" / "tracklist" / "session.json"
 MIN_GAP_SECONDS = 90
+SAMPLE_SECONDS = 10
+SAMPLE_INTERVAL = 60
+SAMPLE_LEAD = 15
 DROP_HEADERS = {"content-length", "host", "x-youtube-ad-signals", "priority"}
 
 
@@ -224,6 +227,10 @@ def find_gaps(entries, total=None):
     if total and total - cursor >= MIN_GAP_SECONDS:
         gaps.append((cursor, total))
     return gaps
+
+
+def plan_samples(start, end):
+    return list(range(start + SAMPLE_LEAD, end - SAMPLE_SECONDS + 1, SAMPLE_INTERVAL))
 
 
 def hhmmss(seconds):
