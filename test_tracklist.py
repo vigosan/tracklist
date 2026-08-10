@@ -1,5 +1,7 @@
 import hashlib
+import tempfile
 import unittest
+from pathlib import Path
 
 import tracklist
 
@@ -24,6 +26,23 @@ class BuildAuthorizationTest(unittest.TestCase):
             f"SAPISID1PHASH 1000_{sha('def', 1000)} "
             f"SAPISID3PHASH 1000_{sha('ghi', 1000)}",
         )
+
+
+NETSCAPE = """\
+# Netscape HTTP Cookie File
+.youtube.com\tTRUE\t/\tTRUE\t0\tSAPISID\tabc
+studio.youtube.com\tFALSE\t/\tTRUE\t0\tSESSION\txyz
+.google.com\tTRUE\t/\tTRUE\t0\tNID\tnope
+"""
+
+
+class ParseCookieFileTest(unittest.TestCase):
+    def test_keeps_youtube_cookies_and_drops_other_domains(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "cookies.txt"
+            path.write_text(NETSCAPE)
+            cookies = tracklist.parse_cookie_file(path)
+        self.assertEqual(cookies, {"SAPISID": "abc", "SESSION": "xyz"})
 
 
 if __name__ == "__main__":

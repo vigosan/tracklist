@@ -10,6 +10,7 @@ import shlex
 import sys
 import urllib.error
 import urllib.request
+from http.cookiejar import MozillaCookieJar
 from pathlib import Path
 
 BASE = "https://studio.youtube.com/youtubei/v1/creator"
@@ -78,6 +79,12 @@ def build_authorization(cookies, timestamp):
             ("SAPISID3PHASH", "__Secure-3PAPISID"),
         )
     )
+
+
+def parse_cookie_file(path):
+    jar = MozillaCookieJar(str(path))
+    jar.load(ignore_discard=True, ignore_expires=True)
+    return {c.name: c.value for c in jar if c.domain.endswith("youtube.com")}
 
 
 def post(endpoint, payload, session):
