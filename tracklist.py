@@ -291,7 +291,11 @@ def recognize_gaps(video_id, gaps):
         suggestions = []
         with tempfile.TemporaryDirectory() as tmp:
             directory = Path(tmp)
-            for start, end in gaps:
+            for index, (start, end) in enumerate(gaps, 1):
+                print(
+                    f"Reconociendo hueco {index}/{len(gaps)} ({hhmmss(start)}-{hhmmss(end)})...",
+                    file=sys.stderr,
+                )
                 source = download_gap(video_id, start, end, directory)
                 if source is None:
                     continue
