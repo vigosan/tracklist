@@ -56,3 +56,75 @@ def tui_rows(entries, gaps, completed, active):
         else:
             rows.append((start, gap_line(start, end)))
     return [line for _, line in sorted(rows, key=lambda row: row[0])]
+
+
+def _pentest_progress(event):
+    line = pentest_line(event)
+    if line:
+        print(line, file=sys.stderr)
+
+
+@contextlib.contextmanager
+def presenter(entries, gaps):
+    if not sys.stderr.isatty():
+        yield _pentest_progress
+        return
+    try:
+        from rich.console import Console
+        from rich.live import Live
+        from rich.text import Text
+    except ImportError:
+        sys.exit("Falta rich para el TUI de --recognize: .venv/bin/pip install rich")
+    state = {"completed": {}, "active": None, "samples": []}
+
+    def close_active():
+        if state["active"] is not None:
+            state["completed"][state["active"]["index"]] = tracklist.merge_samples(state["samples"])
+            state["active"] = None
+            state["samples"] = []
+
+    with Live(console=Console(stderr=True), refresh_per_second=8) as live:
+
+        def refresh():
+            live.update(Text.from_markup("\n".join(tui_rows(entries, gaps, state["completed"], state["active"]))))
+
+        def progress(event):
+            kind = event[0]
+            if kind == "gap":
+                close_active()
+                _, index, total, start, end = event
+                state["active"] = {
+                    "index": index - 1,
+                    "sample": 0,
+                    "total": len(tracklist.plan_samples(start, end)),
+                    "matches": [],
+                    "backoff": False,
+                }
+            elif kind == "sample":
+                _, offset, match = event
+                state["samples"].append((offset, match))
+                state["active"]["sample"] += 1
+                state["active"]["backoff"] = False
+                state["active"]["matches"] = tracklist.merge_samples(state["samples"])
+            elif kind == "backoff":
+                state["active"]["backoff"] = True
+            elif kind == "done":
+                close_active()
+            refresh()
+
+        refresh()
+        yield progress
+
+
+def offer_clipboard(text):
+    if not (sys.stdin.isatty() and sys.stderr.isatty()):
+        return
+    print("¿Copiar al portapapeles? [S/n] ", end="", file=sys.stderr, flush=True)
+    answer = input().strip().lower()
+    if answer not in ("", "s"):
+        return
+    try:
+        subprocess.run(["pbcopy"], input=text.encode(), check=True)
+        print("Copiado.", file=sys.stderr)
+    except (OSError, subprocess.CalledProcessError):
+        print("Aviso: no se pudo copiar al portapapeles", file=sys.stderr)

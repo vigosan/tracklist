@@ -275,7 +275,7 @@ def cut_sample(source, offset, directory):
     return target
 
 
-def recognize_gaps(video_id, gaps):
+def recognize_gaps(video_id, gaps, progress):
     try:
         from shazamio import Shazam
         from shazamio.exceptions import FailedDecodeJson
@@ -287,15 +287,13 @@ def recognize_gaps(video_id, gaps):
         )
 
     async def run():
+        began = time.monotonic()
         shazam = Shazam()
         suggestions = []
         with tempfile.TemporaryDirectory() as tmp:
             directory = Path(tmp)
             for index, (start, end) in enumerate(gaps, 1):
-                print(
-                    f"Reconociendo hueco {index}/{len(gaps)} ({hhmmss(start)}-{hhmmss(end)})...",
-                    file=sys.stderr,
-                )
+                progress(("gap", index, len(gaps), start, end))
                 source = download_gap(video_id, start, end, directory)
                 if source is None:
                     continue
@@ -305,6 +303,7 @@ def recognize_gaps(video_id, gaps):
                     try:
                         result = await shazam.recognize_song(str(sample))
                     except FailedDecodeJson:
+                        progress(("backoff",))
                         await asyncio.sleep(30)
                         try:
                             result = await shazam.recognize_song(str(sample))
@@ -315,8 +314,10 @@ def recognize_gaps(video_id, gaps):
                     if track:
                         match = {"artist": track.get("subtitle", "?"), "title": track.get("title", "?")}
                     samples.append((offset, match))
+                    progress(("sample", offset, match))
                     await asyncio.sleep(1)
                 suggestions += merge_samples(samples)
+        progress(("done", len(suggestions), int(time.monotonic() - began)))
         return suggestions
 
     return asyncio.run(run())
@@ -396,8 +397,15 @@ def main():
         sys.exit("Sin reclamaciones con timestamp para este video.")
     gaps = find_gaps(entries, duration)
     if args.recognize and gaps:
-        entries = sorted(entries + recognize_gaps(video_id, gaps), key=lambda entry: entry["start"])
+        import recognize_ui
+
+        with recognize_ui.presenter(entries, gaps) as progress:
+            entries = sorted(entries + recognize_gaps(video_id, gaps, progress), key=lambda entry: entry["start"])
         gaps = find_gaps(entries, duration)
+        text = render(entries, gaps, video_id, args.label, title)
+        print(text)
+        recognize_ui.offer_clipboard(text)
+        return
     print(render(entries, gaps, video_id, args.label, title))
 
 
