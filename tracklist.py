@@ -360,6 +360,11 @@ def render(entries, gaps, video_id, show_label, title=None):
     return "\n".join(lines)
 
 
+def parse_video_id(text):
+    match = re.search(r"(?:v=|youtu\.be/|video/)([\w-]{11})", text)
+    return match.group(1) if match else text
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("video", nargs="?", help="URL o ID del video")
@@ -376,8 +381,7 @@ def main():
     if not args.video:
         parser.error("indica la URL o el ID del video")
 
-    match = re.search(r"(?:v=|youtu\.be/)([\w-]{11})", args.video)
-    video_id = match.group(1) if match else args.video
+    video_id = parse_video_id(args.video)
 
     title = None
     duration = args.duration

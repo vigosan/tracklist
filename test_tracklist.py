@@ -98,6 +98,14 @@ class MergeSamplesTest(unittest.TestCase):
         )
 
 
+class ParseVideoIdTest(unittest.TestCase):
+    def test_extracts_id_from_every_supported_form(self):
+        self.assertEqual(tracklist.parse_video_id("https://www.youtube.com/watch?v=_6r0Kd41jfs"), "_6r0Kd41jfs")
+        self.assertEqual(tracklist.parse_video_id("https://youtu.be/_6r0Kd41jfs"), "_6r0Kd41jfs")
+        self.assertEqual(tracklist.parse_video_id("https://studio.youtube.com/video/_6r0Kd41jfs/edit"), "_6r0Kd41jfs")
+        self.assertEqual(tracklist.parse_video_id("_6r0Kd41jfs"), "_6r0Kd41jfs")
+
+
 class RenderSuggestionsTest(unittest.TestCase):
     def test_marks_suggested_entries_and_counts_them_separately(self):
         entries = [
