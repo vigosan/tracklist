@@ -120,7 +120,11 @@ def offer_clipboard(text):
     if not (sys.stdin.isatty() and sys.stderr.isatty()):
         return
     print("¿Copiar al portapapeles? [S/n] ", end="", file=sys.stderr, flush=True)
-    answer = input().strip().lower()
+    try:
+        answer = input().strip().lower()
+    except EOFError:
+        print(file=sys.stderr)
+        return
     if answer not in ("", "s"):
         return
     try:
