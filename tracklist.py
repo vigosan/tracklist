@@ -360,6 +360,20 @@ def render(entries, gaps, video_id, show_label, title=None):
     return "\n".join(lines)
 
 
+def recognition_available():
+    try:
+        import shazamio  # noqa: F401
+    except ImportError:
+        print(
+            "Aviso: reconocimiento de huecos desactivado (faltan dependencias).\n"
+            "Para activarlo: .venv/bin/python3 tracklist.py <video>\n"
+            "(una vez: .venv/bin/pip install audioop-lts shazamio==0.4.0.1 rich)",
+            file=sys.stderr,
+        )
+        return False
+    return True
+
+
 def parse_video_id(text):
     match = re.search(r"(?:v=|youtu\.be/|video/)([\w-]{11})", text)
     return match.group(1) if match else text
@@ -372,7 +386,12 @@ def main():
     parser.add_argument("--from-json", metavar="FICHERO", help="usa una respuesta ya guardada")
     parser.add_argument("--duration", type=int, help="duracion total en segundos, para el hueco final")
     parser.add_argument("--label", action="store_true", help="muestra el sello de cada track")
-    parser.add_argument("--recognize", action="store_true", help="identifica los huecos con Shazam")
+    parser.add_argument(
+        "--recognize",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="identifica los huecos con Shazam",
+    )
     args = parser.parse_args()
 
     if args.save_session:
@@ -400,7 +419,7 @@ def main():
     if not entries:
         sys.exit("Sin reclamaciones con timestamp para este video.")
     gaps = find_gaps(entries, duration)
-    if args.recognize and gaps:
+    if args.recognize and gaps and recognition_available():
         import recognize_ui
 
         with recognize_ui.presenter(entries, gaps) as progress:
