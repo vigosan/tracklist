@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import recognize_ui
 import tracklist
 
 
@@ -113,6 +114,18 @@ class RenderSuggestionsTest(unittest.TestCase):
         text = tracklist.render(entries, [], "video123456", False)
         self.assertIn("1 identificados, 0 huecos", text)
         self.assertNotIn("sugeridos", text)
+
+
+class PentestLineTest(unittest.TestCase):
+    def test_formats_each_event_kind(self):
+        self.assertEqual(recognize_ui.pentest_line(("gap", 1, 7, 0, 242)), "[*] hueco 1/7 (00:00-04:02)")
+        self.assertEqual(
+            recognize_ui.pentest_line(("sample", 75, {"artist": "Duran Duran", "title": "Too Late Marlene"})),
+            "[+] 01:15 Duran Duran - Too Late Marlene",
+        )
+        self.assertEqual(recognize_ui.pentest_line(("sample", 135, None)), "[-] 02:15 sin match")
+        self.assertEqual(recognize_ui.pentest_line(("backoff",)), "[!] rate limit - backoff 30s")
+        self.assertEqual(recognize_ui.pentest_line(("done", 8, 552)), "[*] 8 sugerencias en 09:12")
 
 
 if __name__ == "__main__":
