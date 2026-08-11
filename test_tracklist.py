@@ -128,5 +128,41 @@ class PentestLineTest(unittest.TestCase):
         self.assertEqual(recognize_ui.pentest_line(("done", 8, 552)), "[*] 8 sugerencias en 09:12")
 
 
+ENTRY = {"artist": "A", "title": "T", "label": "", "start": 0, "duration": 60}
+SUGGESTION = {"artist": "B", "title": "U", "label": "", "start": 75, "duration": 10, "suggested": True}
+GAPS = [(60, 300), (400, 600)]
+
+
+class TuiRowsTest(unittest.TestCase):
+    def test_initial_state_shows_entries_and_pending_gaps(self):
+        self.assertEqual(
+            recognize_ui.tui_rows([ENTRY], GAPS, {}, None),
+            [
+                "[green]  - 00:00 A - T[/green]",
+                "[dim]  - 01:00 ????? (sin identificar, hasta 05:00)[/dim]",
+                "[dim]  - 06:40 ????? (sin identificar, hasta 10:00)[/dim]",
+            ],
+        )
+
+    def test_active_gap_shows_progress_and_partial_matches(self):
+        active = {"index": 0, "sample": 2, "total": 4, "matches": [SUGGESTION], "backoff": False}
+        rows = recognize_ui.tui_rows([ENTRY], GAPS, {}, active)
+        self.assertEqual(rows[1], "[cyan]  - 01:00 buscando (muestra 2/4)...[/cyan]")
+        self.assertEqual(rows[2], "[yellow]  - 01:15 B - U (?)[/yellow]")
+        self.assertEqual(rows[3], "[dim]  - 06:40 ????? (sin identificar, hasta 10:00)[/dim]")
+
+    def test_active_gap_before_first_sample_shows_download(self):
+        active = {"index": 0, "sample": 0, "total": 4, "matches": [], "backoff": False}
+        self.assertEqual(
+            recognize_ui.tui_rows([ENTRY], GAPS, {}, active)[1],
+            "[cyan]  - 01:00 descargando...[/cyan]",
+        )
+
+    def test_completed_gap_consolidates_suggestions_and_residuals(self):
+        rows = recognize_ui.tui_rows([ENTRY], GAPS, {0: [SUGGESTION]}, None)
+        self.assertEqual(rows[1], "[yellow]  - 01:15 B - U (?)[/yellow]")
+        self.assertEqual(rows[2], "[dim]  - 01:25 ????? (sin identificar, hasta 05:00)[/dim]")
+
+
 if __name__ == "__main__":
     unittest.main()
