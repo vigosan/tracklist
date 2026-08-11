@@ -390,7 +390,7 @@ def main():
         "--recognize",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="identifica los huecos con Shazam",
+        help="identifica los huecos con Shazam (activado por defecto)",
     )
     args = parser.parse_args()
 
