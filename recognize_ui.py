@@ -24,7 +24,9 @@ def pentest_line(event):
 
 
 def entry_line(entry):
-    line = f"  - {tracklist.hhmmss(entry['start'])} {entry['artist']} - {entry['title']}"
+    artist = entry["artist"].replace("[", r"\[")
+    title = entry["title"].replace("[", r"\[")
+    line = f"  - {tracklist.hhmmss(entry['start'])} {artist} - {title}"
     if entry.get("suggested"):
         return f"[yellow]{line} (?)[/yellow]"
     return f"[green]{line}[/green]"
@@ -35,7 +37,7 @@ def gap_line(start, end):
 
 
 def gap_residuals(start, end, suggestions):
-    return tracklist.find_gaps([{"start": start, "duration": 0}] + suggestions, end)
+    return tracklist.find_gaps([{"start": 0, "duration": start}] + suggestions, end)
 
 
 def tui_rows(entries, gaps, completed, active):

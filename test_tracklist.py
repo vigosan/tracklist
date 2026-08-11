@@ -163,6 +163,20 @@ class TuiRowsTest(unittest.TestCase):
         self.assertEqual(rows[1], "[yellow]  - 01:15 B - U (?)[/yellow]")
         self.assertEqual(rows[2], "[dim]  - 01:25 ????? (sin identificar, hasta 05:00)[/dim]")
 
+    def test_completed_late_gap_adds_no_spurious_leading_residual(self):
+        late = {"artist": "C", "title": "V", "label": "", "start": 415, "duration": 10, "suggested": True}
+        rows = recognize_ui.tui_rows([ENTRY], GAPS, {1: [late]}, None)
+        self.assertNotIn("[dim]  - 00:00 ????? (sin identificar, hasta 06:40)[/dim]", rows)
+        self.assertIn("[yellow]  - 06:55 C - V (?)[/yellow]", rows)
+        self.assertIn("[dim]  - 07:05 ????? (sin identificar, hasta 10:00)[/dim]", rows)
+
+    def test_entry_line_escapes_rich_markup_in_metadata(self):
+        entry = {"artist": "DJ [i]X[/i]", "title": "T [Extended]", "label": "", "start": 0, "duration": 60}
+        self.assertEqual(
+            recognize_ui.entry_line(entry),
+            r"[green]  - 00:00 DJ \[i]X\[/i] - T \[Extended][/green]",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
