@@ -397,6 +397,12 @@ def main():
     if args.save_session:
         save_session(args.save_session)
         return
+    if not args.video and sys.stdin.isatty() and sys.stderr.isatty():
+        print("URL o ID del video: ", end="", file=sys.stderr, flush=True)
+        try:
+            args.video = input().strip()
+        except EOFError:
+            print(file=sys.stderr)
     if not args.video:
         parser.error("indica la URL o el ID del video")
 
