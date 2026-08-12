@@ -432,8 +432,13 @@ def main():
     if args.recognize and gaps and recognition_available():
         import recognize_ui
 
-        with recognize_ui.presenter(entries, gaps) as progress:
-            entries = sorted(entries + recognize_gaps(video_id, gaps, progress), key=lambda entry: entry["start"])
+        if recognize_ui.textual_available():
+            import recognize_tui
+
+            found = recognize_tui.run_app(video_id, entries, gaps, duration, args.label, title)
+        else:
+            found = recognize_gaps(video_id, gaps, recognize_ui._pentest_progress)
+        entries = sorted(entries + found, key=lambda entry: entry["start"])
         gaps = find_gaps(entries, duration)
         text = render(entries, gaps, video_id, args.label, title)
         print(text)

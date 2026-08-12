@@ -1,4 +1,3 @@
-import contextlib
 import subprocess
 import sys
 
@@ -66,56 +65,18 @@ def _pentest_progress(event):
         print(line, file=sys.stderr)
 
 
-@contextlib.contextmanager
-def presenter(entries, gaps):
+def textual_available():
     if not sys.stderr.isatty():
-        yield _pentest_progress
-        return
+        return False
     try:
-        from rich.console import Console
-        from rich.live import Live
-        from rich.text import Text
+        import textual  # noqa: F401
     except ImportError:
-        sys.exit("Falta rich para el TUI de --recognize: .venv/bin/pip install rich")
-    state = {"completed": {}, "active": None, "samples": []}
-
-    def close_active():
-        if state["active"] is not None:
-            state["completed"][state["active"]["index"]] = tracklist.merge_samples(state["samples"])
-            state["active"] = None
-            state["samples"] = []
-
-    with Live(console=Console(stderr=True), refresh_per_second=8) as live:
-
-        def refresh():
-            live.update(Text.from_markup("\n".join(tui_rows(entries, gaps, state["completed"], state["active"]))))
-
-        def progress(event):
-            kind = event[0]
-            if kind == "gap":
-                close_active()
-                _, index, total, start, end = event
-                state["active"] = {
-                    "index": index - 1,
-                    "sample": 0,
-                    "total": len(tracklist.plan_samples(start, end)),
-                    "matches": [],
-                    "backoff": False,
-                }
-            elif kind == "sample":
-                _, offset, match = event
-                state["samples"].append((offset, match))
-                state["active"]["sample"] += 1
-                state["active"]["backoff"] = False
-                state["active"]["matches"] = tracklist.merge_samples(state["samples"])
-            elif kind == "backoff":
-                state["active"]["backoff"] = True
-            elif kind == "done":
-                close_active()
-            refresh()
-
-        refresh()
-        yield progress
+        print(
+            "Aviso: TUI desactivado (falta textual: .venv/bin/pip install textual).",
+            file=sys.stderr,
+        )
+        return False
+    return True
 
 
 def offer_clipboard(text):
