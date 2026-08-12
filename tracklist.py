@@ -294,6 +294,8 @@ def recognize_gaps_async(video_id, gaps, progress, resume=None):
             directory = Path(tmp)
             for index, (start, end) in enumerate(gaps, 1):
                 progress(("gap", index, len(gaps), start, end))
+                if resume is not None:
+                    await resume.wait()
                 source = await asyncio.to_thread(download_gap, video_id, start, end, directory)
                 if source is None:
                     continue

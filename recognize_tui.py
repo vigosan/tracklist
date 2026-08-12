@@ -87,6 +87,7 @@ def run_app(video_id, duration, label):
             self.resume = asyncio.Event()
             self.resume.set()
             self.pending = None
+            self.loaded = False
 
         def compose(self) -> ComposeResult:
             with Horizontal(id="body"):
@@ -109,6 +110,31 @@ def run_app(video_id, duration, label):
             self.run_worker(self.load_and_recognize(), exclusive=True)
 
         async def load_and_recognize(self):
+            try:
+                await self.load()
+            except SystemExit as failure:
+                self.fail(str(failure.code))
+                return
+            except Exception as failure:
+                self.fail(f"Error inesperado: {failure}")
+                return
+            if self.error is not None:
+                self.fail(self.error)
+                return
+            if not self.gaps:
+                self.exit()
+                return
+            await self.recognize()
+
+        def fail(self, message):
+            if self.loaded:
+                self.error = None
+                self.query_one("#log", RichLog).write(f"[!] {message}")
+                return
+            self.error = message
+            self.exit()
+
+        async def load(self):
             self.state["phase"] = "cookies"
             if self.session is None:
                 self.session = await asyncio.to_thread(tracklist.fresh_session)
@@ -117,7 +143,6 @@ def run_app(video_id, duration, label):
             self.entries = tracklist.extract(response)
             if not self.entries:
                 self.error = "Sin reclamaciones con timestamp para este video."
-                self.exit()
                 return
             self.state["phase"] = "video"
             if self.duration is None:
@@ -129,10 +154,7 @@ def run_app(video_id, duration, label):
                     self.duration = info["length"] or None
             self.gaps = tracklist.find_gaps(self.entries, self.duration)
             self.state["phase"] = "recognizing"
-            if not self.gaps:
-                self.exit()
-                return
-            await self.recognize()
+            self.loaded = True
 
         async def recognize(self):
             await tracklist.recognize_gaps_async(
@@ -247,10 +269,10 @@ def run_app(video_id, duration, label):
             self.ask_or_run("clear")
 
         def ask_or_run(self, pending):
-            if self.suggestions:
+            if self.suggestions or self.rows_state["samples"]:
                 self.pending = pending
                 self.query_one("#log", RichLog).write(
-                    f"[!] descartar {len(self.suggestions)} sugerencias? s = si, escape = no"
+                    f"[!] descartar {len(self.suggestions) + len(tracklist.merge_samples(self.rows_state['samples']))} sugerencias? s = si, escape = no"
                 )
                 return
             self.apply_pending(pending)
