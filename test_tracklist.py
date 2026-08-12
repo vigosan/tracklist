@@ -251,5 +251,40 @@ class PhaseAndStateTest(unittest.TestCase):
         self.assertFalse(state["paused"])
 
 
+class LimiterTest(unittest.TestCase):
+    def test_starts_at_three_and_halves_on_throttle(self):
+        limiter = tracklist.Limiter()
+        self.assertEqual(limiter.workers, 3)
+        limiter.throttle()
+        self.assertEqual(limiter.workers, 1)
+        limiter.throttle()
+        self.assertEqual(limiter.workers, 1)
+
+    def test_recovers_one_worker_after_enough_clean_samples(self):
+        limiter = tracklist.Limiter()
+        limiter.throttle()
+        for _ in range(tracklist.RECOVER_AFTER - 1):
+            limiter.reward()
+        self.assertEqual(limiter.workers, 1)
+        limiter.reward()
+        self.assertEqual(limiter.workers, 2)
+
+    def test_never_grows_beyond_the_maximum(self):
+        limiter = tracklist.Limiter()
+        for _ in range(tracklist.RECOVER_AFTER * 3):
+            limiter.reward()
+        self.assertEqual(limiter.workers, 3)
+
+    def test_throttle_resets_the_recovery_counter(self):
+        limiter = tracklist.Limiter()
+        limiter.throttle()
+        for _ in range(tracklist.RECOVER_AFTER - 1):
+            limiter.reward()
+        limiter.throttle()
+        for _ in range(tracklist.RECOVER_AFTER - 1):
+            limiter.reward()
+        self.assertEqual(limiter.workers, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

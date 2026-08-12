@@ -26,6 +26,9 @@ MIN_GAP_SECONDS = 90
 SAMPLE_SECONDS = 10
 SAMPLE_INTERVAL = 60
 SAMPLE_LEAD = 15
+START_WORKERS = 3
+MAX_WORKERS = 3
+RECOVER_AFTER = 6
 DROP_HEADERS = {"content-length", "host", "x-youtube-ad-signals", "priority"}
 
 
@@ -232,6 +235,22 @@ def find_gaps(entries, total=None):
 
 def plan_samples(start, end):
     return list(range(start + SAMPLE_LEAD, end - SAMPLE_SECONDS + 1, SAMPLE_INTERVAL))
+
+
+class Limiter:
+    def __init__(self):
+        self.workers = START_WORKERS
+        self.clean = 0
+
+    def throttle(self):
+        self.workers = max(1, self.workers // 2)
+        self.clean = 0
+
+    def reward(self):
+        self.clean += 1
+        if self.clean >= RECOVER_AFTER:
+            self.workers = min(MAX_WORKERS, self.workers + 1)
+            self.clean = 0
 
 
 def merge_samples(samples):
