@@ -275,7 +275,7 @@ def cut_sample(source, offset, directory):
     return target
 
 
-def recognize_gaps(video_id, gaps, progress):
+def recognize_gaps_async(video_id, gaps, progress):
     try:
         from shazamio import Shazam
         from shazamio.exceptions import FailedDecodeJson
@@ -320,7 +320,11 @@ def recognize_gaps(video_id, gaps, progress):
         progress(("done", len(suggestions), int(time.monotonic() - began)))
         return suggestions
 
-    return asyncio.run(run())
+    return run()
+
+
+def recognize_gaps(video_id, gaps, progress):
+    return asyncio.run(recognize_gaps_async(video_id, gaps, progress))
 
 
 def hhmmss(seconds):
