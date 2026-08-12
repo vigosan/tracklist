@@ -288,18 +288,17 @@ def merge_samples(samples):
     return suggestions
 
 
-def download_gap(video_id, start, end, directory):
+def download_audio(video_id, directory):
     command = [
         "yt-dlp", "--quiet", "--no-warnings", "-x", "--audio-format", "mp3",
         "--cookies-from-browser", "brave",
-        "--download-sections", f"*{start}-{end}",
-        "-o", str(directory / f"gap-{start}.%(ext)s"),
+        "-o", str(directory / "audio.%(ext)s"),
         f"https://www.youtube.com/watch?v={video_id}",
     ]
     result = subprocess.run(command, capture_output=True, text=True)
-    matches = list(directory.glob(f"gap-{start}.*"))
+    matches = list(directory.glob("audio.*"))
     if result.returncode != 0 or not matches:
-        print(f"Aviso: no se pudo descargar el hueco {hhmmss(start)}-{hhmmss(end)}", file=sys.stderr)
+        print("Aviso: no se pudo descargar el audio del video", file=sys.stderr)
         return None
     return matches[0]
 
@@ -331,13 +330,14 @@ def recognize_gaps_async(video_id, gaps, progress, resume=None):
         suggestions = []
         with tempfile.TemporaryDirectory() as tmp:
             directory = Path(tmp)
+            if resume is not None:
+                await resume.wait()
+            source = await asyncio.to_thread(download_audio, video_id, directory)
+            if source is None:
+                progress(("done", 0, int(time.monotonic() - began)))
+                return []
             for index, (start, end) in enumerate(gaps, 1):
                 progress(("gap", index, len(gaps), start, end))
-                if resume is not None:
-                    await resume.wait()
-                source = await asyncio.to_thread(download_gap, video_id, start, end, directory)
-                if source is None:
-                    continue
                 samples = []
                 limiter = Limiter()
                 gate = Gate(limiter)
@@ -349,7 +349,7 @@ def recognize_gaps_async(video_id, gaps, progress, resume=None):
                         await resume.wait()
                     await gate.acquire()
                     try:
-                        sample = await asyncio.to_thread(cut_sample, source, offset - start, directory)
+                        sample = await asyncio.to_thread(cut_sample, source, offset, directory)
                         try:
                             result = await shazam.recognize_song(str(sample))
                         except FailedDecodeJson:
