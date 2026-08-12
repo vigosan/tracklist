@@ -66,6 +66,8 @@ def run_app(video_id, duration, label):
             ("x", "clear", "Vaciar"),
             ("c", "copy", "Copiar"),
             ("q", "quit", "Salir"),
+            ("s", "confirm", "Confirmar"),
+            ("escape", "cancel", "Cancelar"),
         ]
 
         def __init__(self, video_id, duration, label):
@@ -204,6 +206,8 @@ def run_app(video_id, duration, label):
             self.query_one("#bar", ProgressBar).update(progress=fields["percent"])
 
         def action_copy(self):
+            if self.pending is not None:
+                return
             entries = sorted(
                 self.entries + self.suggestions + tracklist.merge_samples(self.rows_state["samples"]),
                 key=lambda entry: entry["start"],
@@ -220,6 +224,8 @@ def run_app(video_id, duration, label):
                 log.write("[!] no se pudo copiar al portapapeles")
 
         def action_pause(self):
+            if self.pending is not None:
+                return
             log = self.query_one("#log", RichLog)
             if self.state["paused"]:
                 self.state["paused"] = False
@@ -231,19 +237,35 @@ def run_app(video_id, duration, label):
                 log.write("[*] pausa")
 
         def action_new(self):
+            if self.pending is not None:
+                return
             self.ask_or_run("new")
 
         def action_clear(self):
+            if self.pending is not None:
+                return
             self.ask_or_run("clear")
 
         def ask_or_run(self, pending):
             if self.suggestions:
                 self.pending = pending
                 self.query_one("#log", RichLog).write(
-                    f"[!] descartar {len(self.suggestions)} sugerencias? s/n"
+                    f"[!] descartar {len(self.suggestions)} sugerencias? s = si, escape = no"
                 )
                 return
             self.apply_pending(pending)
+
+        def action_confirm(self):
+            if self.pending is None:
+                return
+            pending, self.pending = self.pending, None
+            self.apply_pending(pending)
+
+        def action_cancel(self):
+            if self.pending is None:
+                return
+            self.pending = None
+            self.query_one("#log", RichLog).write("[*] cancelado")
 
         def apply_pending(self, pending):
             if pending == "new":
@@ -261,15 +283,6 @@ def run_app(video_id, duration, label):
             self.resume.set()
             self.query_one("#log", RichLog).clear()
             self.run_worker(self.load_and_recognize(), exclusive=True)
-
-        def on_key(self, event):
-            if self.pending is None:
-                return
-            pending, self.pending = self.pending, None
-            if event.key == "s":
-                self.apply_pending(pending)
-            else:
-                self.query_one("#log", RichLog).write("[*] cancelado")
 
         def on_input_submitted(self, event):
             new_id = tracklist.parse_video_id(event.value.strip())
