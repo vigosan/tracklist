@@ -4,6 +4,7 @@ Content ID que YouTube Studio muestra para un video propio."""
 
 import argparse
 import asyncio
+import bisect
 import hashlib
 import json
 import re
@@ -319,26 +320,40 @@ def recognize_gaps_async(video_id, gaps, progress, resume=None):
                 if source is None:
                     continue
                 samples = []
-                for offset in plan_samples(start, end):
+                limiter = Limiter()
+                semaphore = asyncio.Semaphore(limiter.workers)
+                warned = False
+
+                async def handle(offset):
+                    nonlocal warned
                     if resume is not None:
                         await resume.wait()
-                    sample = await asyncio.to_thread(cut_sample, source, offset - start, directory)
-                    try:
-                        result = await shazam.recognize_song(str(sample))
-                    except FailedDecodeJson:
-                        progress(("backoff",))
-                        await asyncio.sleep(30)
+                    async with semaphore:
+                        sample = await asyncio.to_thread(cut_sample, source, offset - start, directory)
                         try:
                             result = await shazam.recognize_song(str(sample))
                         except FailedDecodeJson:
+                            if not warned:
+                                warned = True
+                                progress(("backoff",))
+                            limiter.throttle()
+                            await asyncio.sleep(30)
+                            try:
+                                result = await shazam.recognize_song(str(sample))
+                            except FailedDecodeJson:
+                                result = {}
+                        except Exception:
                             result = {}
+                        else:
+                            limiter.reward()
                     track = result.get("track")
                     match = None
                     if track:
                         match = {"artist": track.get("subtitle", "?"), "title": track.get("title", "?")}
-                    samples.append((offset, match))
+                    bisect.insort(samples, (offset, match), key=lambda item: item[0])
                     progress(("sample", offset, match))
-                    await asyncio.sleep(1)
+
+                await asyncio.gather(*[handle(offset) for offset in plan_samples(start, end)])
                 suggestions += merge_samples(samples)
         progress(("done", len(suggestions), int(time.monotonic() - began)))
         return suggestions
