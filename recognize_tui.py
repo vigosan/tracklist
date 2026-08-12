@@ -49,7 +49,7 @@ def initial_state(now):
 def run_app(video_id, duration, label):
     from textual.app import App, ComposeResult
     from textual.containers import Horizontal, Vertical, VerticalScroll
-    from textual.widgets import Footer, Label, ProgressBar, RichLog, Static
+    from textual.widgets import Footer, Input, Label, ProgressBar, RichLog, Static
 
     class RecognizeApp(App):
         CSS = """
@@ -60,7 +60,13 @@ def run_app(video_id, duration, label):
         #status { height: auto; border: round $accent; padding: 0 1; }
         #log { height: 1fr; border: round $accent; }
         """
-        BINDINGS = [("c", "copy", "Copiar"), ("q", "quit", "Salir")]
+        BINDINGS = [
+            ("p", "pause", "Pausa"),
+            ("n", "new", "Nuevo"),
+            ("x", "clear", "Vaciar"),
+            ("c", "copy", "Copiar"),
+            ("q", "quit", "Salir"),
+        ]
 
         def __init__(self, video_id, duration, label):
             super().__init__()
@@ -76,6 +82,9 @@ def run_app(video_id, duration, label):
             self.rows_state = {"completed": {}, "active": None, "samples": []}
             self.state = initial_state(time.monotonic())
             self.frame = 0
+            self.resume = asyncio.Event()
+            self.resume.set()
+            self.pending = None
 
         def compose(self) -> ComposeResult:
             with Horizontal(id="body"):
@@ -85,6 +94,7 @@ def run_app(video_id, duration, label):
                     with Vertical(id="status"):
                         yield Label(id="status-text")
                         yield ProgressBar(total=100, show_eta=False, id="bar")
+                        yield Input(placeholder="URL o ID", id="video-input")
                     yield RichLog(id="log")
             yield Footer()
 
@@ -92,6 +102,7 @@ def run_app(video_id, duration, label):
             self.query_one("#tracklist", VerticalScroll).border_title = "Tracklist"
             self.query_one("#status", Vertical).border_title = "Estado"
             self.query_one("#log", RichLog).border_title = "Log"
+            self.query_one("#video-input", Input).display = False
             self.set_interval(0.1, self.refresh_view)
             self.run_worker(self.load_and_recognize(), exclusive=True)
 
@@ -122,7 +133,9 @@ def run_app(video_id, duration, label):
             await self.recognize()
 
         async def recognize(self):
-            await tracklist.recognize_gaps_async(self.video_id, self.gaps, self.on_progress)
+            await tracklist.recognize_gaps_async(
+                self.video_id, self.gaps, self.on_progress, self.resume
+            )
             self.exit()
 
         def on_progress(self, event):
@@ -176,7 +189,9 @@ def run_app(video_id, duration, label):
             self.query_one("#rows", Static).update("\n".join(rows))
             self.query_one("#tracklist", VerticalScroll).scroll_end(animate=False)
             phase = phase_label(self.state["phase"])
-            if phase:
+            if self.state["paused"]:
+                estado = "PAUSA"
+            elif phase:
                 estado = phase
             elif fields["backoff"]:
                 estado = "rate limit - backoff"
@@ -203,6 +218,71 @@ def run_app(video_id, duration, label):
                 log.write("[*] copiado al portapapeles")
             except (OSError, subprocess.CalledProcessError):
                 log.write("[!] no se pudo copiar al portapapeles")
+
+        def action_pause(self):
+            log = self.query_one("#log", RichLog)
+            if self.state["paused"]:
+                self.state["paused"] = False
+                self.resume.set()
+                log.write("[*] reanudado")
+            else:
+                self.state["paused"] = True
+                self.resume.clear()
+                log.write("[*] pausa")
+
+        def action_new(self):
+            self.ask_or_run("new")
+
+        def action_clear(self):
+            self.ask_or_run("clear")
+
+        def ask_or_run(self, pending):
+            if self.suggestions:
+                self.pending = pending
+                self.query_one("#log", RichLog).write(
+                    f"[!] descartar {len(self.suggestions)} sugerencias? s/n"
+                )
+                return
+            self.apply_pending(pending)
+
+        def apply_pending(self, pending):
+            if pending == "new":
+                self.query_one("#log", RichLog).write("[*] escribe la URL o ID y pulsa Enter")
+                self.query_one("#video-input", Input).display = True
+                self.query_one("#video-input", Input).focus()
+                return
+            self.restart()
+
+        def restart(self):
+            self.workers.cancel_all()
+            self.suggestions = []
+            self.rows_state = {"completed": {}, "active": None, "samples": []}
+            self.state = initial_state(time.monotonic())
+            self.resume.set()
+            self.query_one("#log", RichLog).clear()
+            self.run_worker(self.load_and_recognize(), exclusive=True)
+
+        def on_key(self, event):
+            if self.pending is None:
+                return
+            pending, self.pending = self.pending, None
+            if event.key == "s":
+                self.apply_pending(pending)
+            else:
+                self.query_one("#log", RichLog).write("[*] cancelado")
+
+        def on_input_submitted(self, event):
+            new_id = tracklist.parse_video_id(event.value.strip())
+            event.input.display = False
+            event.input.value = ""
+            if not new_id:
+                return
+            self.video_id = new_id
+            self.entries = []
+            self.gaps = []
+            self.title_line = None
+            self.duration = None
+            self.restart()
 
     app = RecognizeApp(video_id, duration, label)
     app.run()
