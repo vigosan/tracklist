@@ -275,7 +275,7 @@ def cut_sample(source, offset, directory):
     return target
 
 
-def recognize_gaps_async(video_id, gaps, progress):
+def recognize_gaps_async(video_id, gaps, progress, resume=None):
     try:
         from shazamio import Shazam
         from shazamio.exceptions import FailedDecodeJson
@@ -294,12 +294,14 @@ def recognize_gaps_async(video_id, gaps, progress):
             directory = Path(tmp)
             for index, (start, end) in enumerate(gaps, 1):
                 progress(("gap", index, len(gaps), start, end))
-                source = download_gap(video_id, start, end, directory)
+                source = await asyncio.to_thread(download_gap, video_id, start, end, directory)
                 if source is None:
                     continue
                 samples = []
                 for offset in plan_samples(start, end):
-                    sample = cut_sample(source, offset - start, directory)
+                    if resume is not None:
+                        await resume.wait()
+                    sample = await asyncio.to_thread(cut_sample, source, offset - start, directory)
                     try:
                         result = await shazam.recognize_song(str(sample))
                     except FailedDecodeJson:
