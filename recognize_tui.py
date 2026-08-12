@@ -76,7 +76,7 @@ def run_app(video_id, entries, gaps, duration, label, title):
             self.run_worker(self.recognize(), exclusive=True)
 
         async def recognize(self):
-            self.suggestions = await tracklist.recognize_gaps_async(
+            await tracklist.recognize_gaps_async(
                 self.video_id, self.gaps, self.on_progress
             )
             self.exit()
