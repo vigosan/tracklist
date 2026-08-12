@@ -1,3 +1,4 @@
+import asyncio
 import subprocess
 import time
 
@@ -45,7 +46,7 @@ def initial_state(now):
     }
 
 
-def run_app(video_id, entries, gaps, duration, label, title):
+def run_app(video_id, duration, label):
     from textual.app import App, ComposeResult
     from textual.containers import Horizontal, Vertical, VerticalScroll
     from textual.widgets import Footer, Label, ProgressBar, RichLog, Static
@@ -61,20 +62,19 @@ def run_app(video_id, entries, gaps, duration, label, title):
         """
         BINDINGS = [("c", "copy", "Copiar"), ("q", "quit", "Salir")]
 
-        def __init__(self, video_id, entries, gaps, duration, label, title):
+        def __init__(self, video_id, duration, label):
             super().__init__()
             self.video_id = video_id
-            self.entries = entries
-            self.gaps = gaps
+            self.entries = []
+            self.gaps = []
             self.duration = duration
             self.label = label
-            self.title_line = title
+            self.title_line = None
+            self.error = None
+            self.session = None
             self.suggestions = []
             self.rows_state = {"completed": {}, "active": None, "samples": []}
-            self.state = {
-                "gap": None, "sample": 0, "total": 0, "sample_started": time.monotonic(),
-                "backoff": False, "suggestions": 0, "began": time.monotonic(),
-            }
+            self.state = initial_state(time.monotonic())
             self.frame = 0
 
         def compose(self) -> ComposeResult:
@@ -93,12 +93,36 @@ def run_app(video_id, entries, gaps, duration, label, title):
             self.query_one("#status", Vertical).border_title = "Estado"
             self.query_one("#log", RichLog).border_title = "Log"
             self.set_interval(0.1, self.refresh_view)
-            self.run_worker(self.recognize(), exclusive=True)
+            self.run_worker(self.load_and_recognize(), exclusive=True)
+
+        async def load_and_recognize(self):
+            self.state["phase"] = "cookies"
+            if self.session is None:
+                self.session = await asyncio.to_thread(tracklist.fresh_session)
+            self.state["phase"] = "claims"
+            response = await asyncio.to_thread(tracklist.fetch_claims, self.video_id, self.session)
+            self.entries = tracklist.extract(response)
+            if not self.entries:
+                self.error = "Sin reclamaciones con timestamp para este video."
+                self.exit()
+                return
+            self.state["phase"] = "video"
+            if self.duration is None:
+                info = (await asyncio.to_thread(
+                    tracklist.fetch_videos, [self.video_id], self.session
+                )).get(self.video_id)
+                if info:
+                    self.title_line = info["title"]
+                    self.duration = info["length"] or None
+            self.gaps = tracklist.find_gaps(self.entries, self.duration)
+            self.state["phase"] = "recognizing"
+            if not self.gaps:
+                self.exit()
+                return
+            await self.recognize()
 
         async def recognize(self):
-            await tracklist.recognize_gaps_async(
-                self.video_id, self.gaps, self.on_progress
-            )
+            await tracklist.recognize_gaps_async(self.video_id, self.gaps, self.on_progress)
             self.exit()
 
         def on_progress(self, event):
@@ -151,7 +175,13 @@ def run_app(video_id, entries, gaps, duration, label, title):
             rows = [row.replace("...[/cyan]", f" {spinner}[/cyan]") for row in rows]
             self.query_one("#rows", Static).update("\n".join(rows))
             self.query_one("#tracklist", VerticalScroll).scroll_end(animate=False)
-            estado = "rate limit - backoff" if fields["backoff"] else f"Muestra {fields['sample']}"
+            phase = phase_label(self.state["phase"])
+            if phase:
+                estado = phase
+            elif fields["backoff"]:
+                estado = "rate limit - backoff"
+            else:
+                estado = f"Muestra {fields['sample']}"
             self.query_one("#status-text", Label).update(
                 f"Hueco {fields['gap']}   {estado}\n"
                 f"Sugerencias {fields['suggestions']}   Tiempo {fields['elapsed']}"
@@ -174,7 +204,7 @@ def run_app(video_id, entries, gaps, duration, label, title):
             except (OSError, subprocess.CalledProcessError):
                 log.write("[!] no se pudo copiar al portapapeles")
 
-    app = RecognizeApp(video_id, entries, gaps, duration, label, title)
+    app = RecognizeApp(video_id, duration, label)
     app.run()
     app.close_active()
-    return app.suggestions
+    return app.suggestions, app.entries, app.gaps, app.duration, app.title_line, app.error
