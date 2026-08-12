@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import recognize_tui
 import recognize_ui
 import tracklist
 
@@ -184,6 +185,45 @@ class TuiRowsTest(unittest.TestCase):
             recognize_ui.entry_line(entry),
             r"[green]  - 00:00 DJ \[i]X\[/i] - T \[Extended][/green]",
         )
+
+
+STATE = {
+    "gap": (3, 7),
+    "sample": 6,
+    "total": 12,
+    "sample_started": 100.0,
+    "backoff": False,
+    "suggestions": 8,
+    "began": 50.0,
+}
+
+
+class StatusFieldsTest(unittest.TestCase):
+    def test_interpolates_progress_inside_the_current_sample(self):
+        fields = recognize_tui.status_fields(STATE, 102.0)
+        self.assertEqual(fields["gap"], "3/7")
+        self.assertEqual(fields["sample"], "7/12")
+        self.assertEqual(fields["percent"], 54)
+        self.assertEqual(fields["suggestions"], 8)
+        self.assertEqual(fields["elapsed"], "00:52")
+        self.assertFalse(fields["backoff"])
+
+    def test_progress_freezes_during_backoff(self):
+        fields = recognize_tui.status_fields({**STATE, "backoff": True}, 160.0)
+        self.assertEqual(fields["percent"], 50)
+        self.assertTrue(fields["backoff"])
+
+    def test_interpolation_never_reaches_the_next_sample(self):
+        self.assertEqual(recognize_tui.status_fields(STATE, 999.0)["percent"], 57)
+
+    def test_before_the_first_gap(self):
+        idle = {"gap": None, "sample": 0, "total": 0, "sample_started": 0.0,
+                "backoff": False, "suggestions": 0, "began": 50.0}
+        fields = recognize_tui.status_fields(idle, 50.0)
+        self.assertEqual(fields["gap"], "-")
+        self.assertEqual(fields["percent"], 0)
+        self.assertEqual(fields["sample"], "-")
+        self.assertEqual(fields["elapsed"], "00:00")
 
 
 if __name__ == "__main__":
