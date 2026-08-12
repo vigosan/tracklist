@@ -26,6 +26,25 @@ def status_fields(state, now):
     }
 
 
+PHASE_LABELS = {
+    "cookies": "Leyendo cookies de Brave...",
+    "claims": "Pidiendo reclamaciones a Studio...",
+    "video": "Pidiendo datos del video...",
+}
+
+
+def phase_label(phase):
+    return PHASE_LABELS.get(phase, "")
+
+
+def initial_state(now):
+    return {
+        "gap": None, "sample": 0, "total": 0, "sample_started": now,
+        "backoff": False, "suggestions": 0, "began": now,
+        "phase": "cookies", "paused": False,
+    }
+
+
 def run_app(video_id, entries, gaps, duration, label, title):
     from textual.app import App, ComposeResult
     from textual.containers import Horizontal, Vertical, VerticalScroll

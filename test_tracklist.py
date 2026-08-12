@@ -230,5 +230,26 @@ class StatusFieldsTest(unittest.TestCase):
         self.assertEqual(fields["elapsed"], "00:00")
 
 
+class PhaseAndStateTest(unittest.TestCase):
+    def test_phase_labels(self):
+        self.assertEqual(recognize_tui.phase_label("cookies"), "Leyendo cookies de Brave...")
+        self.assertEqual(recognize_tui.phase_label("claims"), "Pidiendo reclamaciones a Studio...")
+        self.assertEqual(recognize_tui.phase_label("video"), "Pidiendo datos del video...")
+        self.assertEqual(recognize_tui.phase_label("recognizing"), "")
+        self.assertEqual(recognize_tui.phase_label("cualquier-otra"), "")
+
+    def test_initial_state_starts_empty(self):
+        state = recognize_tui.initial_state(500.0)
+        self.assertIsNone(state["gap"])
+        self.assertEqual(state["sample"], 0)
+        self.assertEqual(state["total"], 0)
+        self.assertEqual(state["suggestions"], 0)
+        self.assertFalse(state["backoff"])
+        self.assertEqual(state["began"], 500.0)
+        self.assertEqual(state["sample_started"], 500.0)
+        self.assertEqual(state["phase"], "cookies")
+        self.assertFalse(state["paused"])
+
+
 if __name__ == "__main__":
     unittest.main()
