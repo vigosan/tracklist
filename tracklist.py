@@ -371,7 +371,7 @@ def recognition_available():
         print(
             "Aviso: reconocimiento de huecos desactivado (faltan dependencias).\n"
             "Para activarlo: .venv/bin/python3 tracklist.py <video>\n"
-            "(una vez: .venv/bin/pip install audioop-lts shazamio==0.4.0.1 rich)",
+            "(una vez: .venv/bin/pip install audioop-lts shazamio==0.4.0.1 textual)",
             file=sys.stderr,
         )
         return False

@@ -14,7 +14,7 @@ def status_fields(state, now):
         fraction = 0.0
     else:
         fraction = min(0.95, (now - state["sample_started"]) / SAMPLE_ESTIMATE)
-    percent = int(100 * (state["sample"] + fraction) / total) if total else 0
+    percent = min(100, int(100 * (state["sample"] + fraction) / total)) if total else 0
     gap = state["gap"]
     return {
         "gap": f"{gap[0]}/{gap[1]}" if gap else "-",
@@ -28,7 +28,7 @@ def status_fields(state, now):
 
 def run_app(video_id, entries, gaps, duration, label, title):
     from textual.app import App, ComposeResult
-    from textual.containers import Horizontal, Vertical
+    from textual.containers import Horizontal, Vertical, VerticalScroll
     from textual.widgets import Footer, Label, ProgressBar, RichLog, Static
 
     class RecognizeApp(App):
@@ -60,16 +60,17 @@ def run_app(video_id, entries, gaps, duration, label, title):
 
         def compose(self) -> ComposeResult:
             with Horizontal(id="body"):
-                yield Static(id="tracklist")
+                with VerticalScroll(id="tracklist"):
+                    yield Static(id="rows")
                 with Vertical(id="side"):
                     with Vertical(id="status"):
                         yield Label(id="status-text")
                         yield ProgressBar(total=100, show_eta=False, id="bar")
-                    yield RichLog(id="log", markup=True)
+                    yield RichLog(id="log")
             yield Footer()
 
         def on_mount(self):
-            self.query_one("#tracklist", Static).border_title = "Tracklist"
+            self.query_one("#tracklist", VerticalScroll).border_title = "Tracklist"
             self.query_one("#status", Vertical).border_title = "Estado"
             self.query_one("#log", RichLog).border_title = "Log"
             self.set_interval(0.1, self.refresh_view)
@@ -129,7 +130,8 @@ def run_app(video_id, entries, gaps, duration, label, title):
                 self.entries, self.gaps, self.rows_state["completed"], self.rows_state["active"]
             )
             rows = [row.replace("...[/cyan]", f" {spinner}[/cyan]") for row in rows]
-            self.query_one("#tracklist", Static).update("\n".join(rows))
+            self.query_one("#rows", Static).update("\n".join(rows))
+            self.query_one("#tracklist", VerticalScroll).scroll_end(animate=False)
             estado = "rate limit - backoff" if fields["backoff"] else f"Muestra {fields['sample']}"
             self.query_one("#status-text", Label).update(
                 f"Hueco {fields['gap']}   {estado}\n"
@@ -138,7 +140,10 @@ def run_app(video_id, entries, gaps, duration, label, title):
             self.query_one("#bar", ProgressBar).update(progress=fields["percent"])
 
         def action_copy(self):
-            entries = sorted(self.entries + self.suggestions, key=lambda entry: entry["start"])
+            entries = sorted(
+                self.entries + self.suggestions + tracklist.merge_samples(self.rows_state["samples"]),
+                key=lambda entry: entry["start"],
+            )
             text = tracklist.render(
                 entries, tracklist.find_gaps(entries, self.duration),
                 self.video_id, self.label, self.title_line,
@@ -152,4 +157,5 @@ def run_app(video_id, entries, gaps, duration, label, title):
 
     app = RecognizeApp(video_id, entries, gaps, duration, label, title)
     app.run()
+    app.close_active()
     return app.suggestions

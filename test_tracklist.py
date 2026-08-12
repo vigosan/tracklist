@@ -216,6 +216,10 @@ class StatusFieldsTest(unittest.TestCase):
     def test_interpolation_never_reaches_the_next_sample(self):
         self.assertEqual(recognize_tui.status_fields(STATE, 999.0)["percent"], 57)
 
+    def test_percent_never_exceeds_one_hundred(self):
+        finished = {**STATE, "sample": 12}
+        self.assertEqual(recognize_tui.status_fields(finished, 999.0)["percent"], 100)
+
     def test_before_the_first_gap(self):
         idle = {"gap": None, "sample": 0, "total": 0, "sample_started": 0.0,
                 "backoff": False, "suggestions": 0, "began": 50.0}
