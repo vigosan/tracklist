@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import tempfile
 import unittest
@@ -284,6 +285,30 @@ class LimiterTest(unittest.TestCase):
         for _ in range(tracklist.RECOVER_AFTER - 1):
             limiter.reward()
         self.assertEqual(limiter.workers, 1)
+
+
+class GateTest(unittest.IsolatedAsyncioTestCase):
+    async def test_gate_admits_up_to_current_worker_count(self):
+        limiter = tracklist.Limiter()
+        gate = tracklist.Gate(limiter)
+        await gate.acquire()
+        await gate.acquire()
+        await gate.acquire()
+        self.assertEqual(gate.active, 3)
+        gate.release()
+        self.assertEqual(gate.active, 2)
+
+    async def test_gate_blocks_when_the_limiter_throttles(self):
+        limiter = tracklist.Limiter()
+        gate = tracklist.Gate(limiter)
+        await gate.acquire()
+        limiter.throttle()
+        blocked = asyncio.create_task(gate.acquire())
+        await asyncio.sleep(0)
+        self.assertFalse(blocked.done())
+        gate.release()
+        await asyncio.wait_for(blocked, timeout=1)
+        self.assertEqual(gate.active, 1)
 
 
 if __name__ == "__main__":

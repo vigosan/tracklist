@@ -30,6 +30,7 @@ SAMPLE_LEAD = 15
 START_WORKERS = 3
 MAX_WORKERS = 3
 RECOVER_AFTER = 6
+SAMPLE_PACING = 0.5
 DROP_HEADERS = {"content-length", "host", "x-youtube-ad-signals", "priority"}
 
 
@@ -254,6 +255,24 @@ class Limiter:
             self.clean = 0
 
 
+class Gate:
+    def __init__(self, limiter):
+        self.limiter = limiter
+        self.active = 0
+        self.idle = asyncio.Event()
+        self.idle.set()
+
+    async def acquire(self):
+        while self.active >= self.limiter.workers:
+            self.idle.clear()
+            await self.idle.wait()
+        self.active += 1
+
+    def release(self):
+        self.active -= 1
+        self.idle.set()
+
+
 def merge_samples(samples):
     suggestions = []
     previous = None
@@ -321,14 +340,15 @@ def recognize_gaps_async(video_id, gaps, progress, resume=None):
                     continue
                 samples = []
                 limiter = Limiter()
-                semaphore = asyncio.Semaphore(limiter.workers)
+                gate = Gate(limiter)
                 warned = False
 
                 async def handle(offset):
                     nonlocal warned
                     if resume is not None:
                         await resume.wait()
-                    async with semaphore:
+                    await gate.acquire()
+                    try:
                         sample = await asyncio.to_thread(cut_sample, source, offset - start, directory)
                         try:
                             result = await shazam.recognize_song(str(sample))
@@ -346,12 +366,15 @@ def recognize_gaps_async(video_id, gaps, progress, resume=None):
                             result = {}
                         else:
                             limiter.reward()
+                    finally:
+                        gate.release()
                     track = result.get("track")
                     match = None
                     if track:
                         match = {"artist": track.get("subtitle", "?"), "title": track.get("title", "?")}
                     bisect.insort(samples, (offset, match), key=lambda item: item[0])
                     progress(("sample", offset, match))
+                    await asyncio.sleep(SAMPLE_PACING)
 
                 await asyncio.gather(*[handle(offset) for offset in plan_samples(start, end)])
                 suggestions += merge_samples(samples)
