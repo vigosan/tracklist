@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/Users/vicent/Desktop/tracklist/.venv/bin/python3
 """Genera un tracklist con timestamps a partir de las reclamaciones de
 Content ID que YouTube Studio muestra para un video propio."""
 
