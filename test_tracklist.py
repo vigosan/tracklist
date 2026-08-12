@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
@@ -309,6 +310,32 @@ class GateTest(unittest.IsolatedAsyncioTestCase):
         gate.release()
         await asyncio.wait_for(blocked, timeout=1)
         self.assertEqual(gate.active, 1)
+
+
+class SingleDownloadTest(unittest.TestCase):
+    def test_downloads_once_and_cuts_with_absolute_offsets(self):
+        if importlib.util.find_spec("shazamio") is None:
+            self.skipTest("shazamio no disponible")
+        import shazamio
+
+        downloads = []
+        cuts = []
+
+        class FakeShazam:
+            async def recognize_song(self, path):
+                return {}
+
+        original = (tracklist.download_audio, tracklist.cut_sample, shazamio.Shazam)
+        tracklist.download_audio = lambda video_id, directory: downloads.append(video_id) or Path("/tmp/a.mp3")
+        tracklist.cut_sample = lambda source, offset, directory: cuts.append(offset) or Path("/tmp/s.wav")
+        shazamio.Shazam = FakeShazam
+        try:
+            tracklist.recognize_gaps("vid12345678", [(0, 300), (600, 900)], lambda event: None)
+        finally:
+            tracklist.download_audio, tracklist.cut_sample, shazamio.Shazam = original
+
+        self.assertEqual(len(downloads), 1)
+        self.assertEqual(sorted(cuts), [15, 75, 135, 195, 255, 615, 675, 735, 795, 855])
 
 
 if __name__ == "__main__":
