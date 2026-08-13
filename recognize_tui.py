@@ -146,12 +146,21 @@ def run_app(video_id, duration, label):
                 return
             self.state["phase"] = "video"
             if self.duration is None:
-                info = (await asyncio.to_thread(
-                    tracklist.fetch_videos, [self.video_id], self.session
-                )).get(self.video_id)
-                if info:
-                    self.title_line = info["title"]
-                    self.duration = info["length"] or None
+                cached = tracklist.load_cache(self.video_id)
+                if cached["duration"]:
+                    self.title_line = cached["title"]
+                    self.duration = cached["duration"]
+                else:
+                    info = (await asyncio.to_thread(
+                        tracklist.fetch_videos, [self.video_id], self.session
+                    )).get(self.video_id)
+                    if info:
+                        self.title_line = info["title"]
+                        self.duration = info["length"] or None
+                        await asyncio.to_thread(
+                            tracklist.save_video_details,
+                            self.video_id, self.title_line, self.duration,
+                        )
             self.gaps = tracklist.find_gaps(self.entries, self.duration)
             self.state["phase"] = "recognizing"
             self.loaded = True

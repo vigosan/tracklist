@@ -312,6 +312,67 @@ class GateTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(gate.active, 1)
 
 
+class CacheTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        original = (tracklist.CACHE_DIR, tracklist.AUDIO_DIR)
+        tracklist.CACHE_DIR = root / "cache"
+        tracklist.AUDIO_DIR = root / "audio"
+
+        def restore():
+            tracklist.CACHE_DIR, tracklist.AUDIO_DIR = original
+
+        self.addCleanup(restore)
+
+    def test_missing_cache_reads_as_empty(self):
+        cache = tracklist.load_cache("vid12345678")
+        self.assertEqual(cache, {"samples": {}, "title": None, "duration": None})
+
+    def test_saved_samples_survive_a_reload(self):
+        match = {"artist": "A", "title": "T"}
+        tracklist.save_sample("vid12345678", 15, match)
+        tracklist.save_sample("vid12345678", 75, None)
+        self.assertEqual(
+            tracklist.load_cache("vid12345678")["samples"], {15: match, 75: None}
+        )
+
+    def test_saved_samples_keep_the_cached_video_details(self):
+        tracklist.save_video_details("vid12345678", "Un set", 3600)
+        tracklist.save_sample("vid12345678", 15, None)
+        cache = tracklist.load_cache("vid12345678")
+        self.assertEqual(cache["title"], "Un set")
+        self.assertEqual(cache["duration"], 3600)
+
+    def test_each_video_keeps_its_own_samples(self):
+        tracklist.save_sample("vid12345678", 15, {"artist": "A", "title": "T"})
+        self.assertEqual(tracklist.load_cache("otro1234567")["samples"], {})
+
+    def test_clear_removes_samples_and_audio(self):
+        tracklist.save_sample("vid12345678", 15, None)
+        tracklist.AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+        audio = tracklist.audio_path("vid12345678")
+        audio.write_bytes(b"mp3")
+        tracklist.clear_cache("vid12345678")
+        self.assertEqual(tracklist.load_cache("vid12345678")["samples"], {})
+        self.assertFalse(audio.exists())
+
+    def test_clear_on_a_video_never_analysed_is_harmless(self):
+        tracklist.clear_cache("vid12345678")
+
+    def test_corrupt_cache_reads_as_empty_instead_of_crashing(self):
+        tracklist.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        tracklist.cache_path("vid12345678").write_text("{no es json")
+        self.assertEqual(tracklist.load_cache("vid12345678")["samples"], {})
+
+
+class ArgumentsTest(unittest.TestCase):
+    def test_analysis_is_resumed_unless_fresh_is_requested(self):
+        self.assertFalse(tracklist.build_parser().parse_args(["vid12345678"]).fresh)
+        self.assertTrue(tracklist.build_parser().parse_args(["vid12345678", "--fresh"]).fresh)
+
+
 class SingleDownloadTest(unittest.TestCase):
     def test_downloads_once_and_cuts_with_absolute_offsets(self):
         if importlib.util.find_spec("shazamio") is None:
@@ -336,6 +397,96 @@ class SingleDownloadTest(unittest.TestCase):
 
         self.assertEqual(len(downloads), 1)
         self.assertEqual(sorted(cuts), [15, 75, 135, 195, 255, 615, 675, 735, 795, 855])
+
+
+class ResumeTest(unittest.TestCase):
+    def setUp(self):
+        if importlib.util.find_spec("shazamio") is None:
+            self.skipTest("shazamio no disponible")
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        original = (tracklist.CACHE_DIR, tracklist.AUDIO_DIR)
+        tracklist.CACHE_DIR = root / "cache"
+        tracklist.AUDIO_DIR = root / "audio"
+
+        def restore():
+            tracklist.CACHE_DIR, tracklist.AUDIO_DIR = original
+
+        self.addCleanup(restore)
+
+    def run_recognition(self, gaps):
+        import shazamio
+
+        self.downloads = []
+        self.cuts = []
+        events = []
+
+        class FakeShazam:
+            async def recognize_song(self, path):
+                return {"track": {"subtitle": "A", "title": "T"}}
+
+        def fake_download(video_id, directory):
+            self.downloads.append(video_id)
+            target = tracklist.audio_path(video_id)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"mp3")
+            return target
+
+        original = (tracklist.download_audio, tracklist.cut_sample, shazamio.Shazam)
+        tracklist.download_audio = fake_download
+        tracklist.cut_sample = lambda source, offset, directory: self.cuts.append(offset) or Path("/tmp/s.wav")
+        shazamio.Shazam = FakeShazam
+        try:
+            tracklist.recognize_gaps("vid12345678", gaps, events.append)
+        finally:
+            tracklist.download_audio, tracklist.cut_sample, shazamio.Shazam = original
+        return events
+
+    def test_recognised_samples_are_cached_for_the_next_run(self):
+        self.run_recognition([(0, 150)])
+        match = {"artist": "A", "title": "T"}
+        self.assertEqual(
+            tracklist.load_cache("vid12345678")["samples"],
+            {15: match, 75: match, 135: match},
+        )
+
+    def test_second_run_reuses_the_audio_instead_of_downloading_again(self):
+        self.run_recognition([(0, 150)])
+        self.run_recognition([(0, 150)])
+        self.assertEqual(self.downloads, [])
+
+    def test_second_run_skips_samples_it_already_recognised(self):
+        self.run_recognition([(0, 150)])
+        self.run_recognition([(0, 150)])
+        self.assertEqual(self.cuts, [])
+
+    def test_only_the_missing_samples_are_recognised_again(self):
+        self.run_recognition([(0, 150)])
+        self.run_recognition([(0, 270)])
+        self.assertEqual(sorted(self.cuts), [195, 255])
+
+    def test_cached_samples_still_reach_the_progress_callback(self):
+        self.run_recognition([(0, 150)])
+        events = self.run_recognition([(0, 150)])
+        match = {"artist": "A", "title": "T"}
+        samples = [event for event in events if event[0] == "sample"]
+        self.assertEqual(
+            samples,
+            [("sample", 15, match), ("sample", 75, match), ("sample", 135, match)],
+        )
+
+    def test_a_fully_cached_run_still_yields_its_suggestions(self):
+        self.run_recognition([(0, 150)])
+        events = self.run_recognition([(0, 150)])
+        self.assertEqual([event for event in events if event[0] == "done"][0][1], 1)
+
+    def test_missing_audio_is_downloaded_again_without_losing_samples(self):
+        self.run_recognition([(0, 150)])
+        tracklist.audio_path("vid12345678").unlink()
+        self.run_recognition([(0, 150)])
+        self.assertEqual(self.downloads, ["vid12345678"])
+        self.assertEqual(self.cuts, [])
 
 
 if __name__ == "__main__":

@@ -23,6 +23,8 @@ ORIGIN = "https://studio.youtube.com"
 CLAIMS_ENDPOINT = f"{BASE}/list_creator_received_claims?alt=json"
 VIDEOS_ENDPOINT = f"{BASE}/get_creator_videos?alt=json"
 SESSION_FILE = Path.home() / ".config" / "tracklist" / "session.json"
+CACHE_DIR = Path.home() / ".config" / "tracklist" / "cache"
+AUDIO_DIR = Path.home() / "Library" / "Caches" / "tracklist"
 MIN_GAP_SECONDS = 90
 SAMPLE_SECONDS = 10
 SAMPLE_INTERVAL = 60
@@ -77,6 +79,53 @@ def load_session():
             "    tracklist --save-session fichero.txt"
         )
     return json.loads(SESSION_FILE.read_text())
+
+
+def cache_path(video_id):
+    return CACHE_DIR / f"{video_id}.json"
+
+
+def audio_path(video_id):
+    return AUDIO_DIR / f"{video_id}.mp3"
+
+
+def load_cache(video_id):
+    empty = {"samples": {}, "title": None, "duration": None}
+    path = cache_path(video_id)
+    if not path.exists():
+        return empty
+    try:
+        stored = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return empty
+    return {
+        "samples": {int(offset): match for offset, match in stored.get("samples", {}).items()},
+        "title": stored.get("title"),
+        "duration": stored.get("duration"),
+    }
+
+
+def write_cache(video_id, cache):
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache_path(video_id).write_text(json.dumps(cache))
+
+
+def save_sample(video_id, offset, match):
+    cache = load_cache(video_id)
+    cache["samples"][offset] = match
+    write_cache(video_id, cache)
+
+
+def save_video_details(video_id, title, duration):
+    cache = load_cache(video_id)
+    cache["title"] = title
+    cache["duration"] = duration
+    write_cache(video_id, cache)
+
+
+def clear_cache(video_id):
+    cache_path(video_id).unlink(missing_ok=True)
+    audio_path(video_id).unlink(missing_ok=True)
 
 
 def build_authorization(cookies, timestamp):
@@ -289,18 +338,19 @@ def merge_samples(samples):
 
 
 def download_audio(video_id, directory):
+    AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+    target = audio_path(video_id)
     command = [
         "yt-dlp", "--quiet", "--no-warnings", "-x", "--audio-format", "mp3",
         "--cookies-from-browser", "brave",
-        "-o", str(directory / "audio.%(ext)s"),
+        "-o", str(target.with_suffix(".%(ext)s")),
         f"https://www.youtube.com/watch?v={video_id}",
     ]
     result = subprocess.run(command, capture_output=True, text=True)
-    matches = list(directory.glob("audio.*"))
-    if result.returncode != 0 or not matches:
+    if result.returncode != 0 or not target.exists():
         print("Aviso: no se pudo descargar el audio del video", file=sys.stderr)
         return None
-    return matches[0]
+    return target
 
 
 def cut_sample(source, offset, directory):
@@ -332,7 +382,10 @@ def recognize_gaps_async(video_id, gaps, progress, resume=None):
             directory = Path(tmp)
             if resume is not None:
                 await resume.wait()
-            source = await asyncio.to_thread(download_audio, video_id, directory)
+            cached_samples = load_cache(video_id)["samples"]
+            source = audio_path(video_id)
+            if not source.exists():
+                source = await asyncio.to_thread(download_audio, video_id, directory)
             if source is None:
                 progress(("done", 0, int(time.monotonic() - began)))
                 return []
@@ -345,6 +398,10 @@ def recognize_gaps_async(video_id, gaps, progress, resume=None):
 
                 async def handle(offset):
                     nonlocal warned
+                    if offset in cached_samples:
+                        bisect.insort(samples, (offset, cached_samples[offset]), key=lambda item: item[0])
+                        progress(("sample", offset, cached_samples[offset]))
+                        return
                     if resume is not None:
                         await resume.wait()
                     await gate.acquire()
@@ -373,6 +430,7 @@ def recognize_gaps_async(video_id, gaps, progress, resume=None):
                     if track:
                         match = {"artist": track.get("subtitle", "?"), "title": track.get("title", "?")}
                     bisect.insort(samples, (offset, match), key=lambda item: item[0])
+                    save_sample(video_id, offset, match)
                     progress(("sample", offset, match))
                     await asyncio.sleep(SAMPLE_PACING)
 
@@ -444,19 +502,25 @@ def parse_video_id(text):
     return match.group(1) if match else text
 
 
-def main():
+def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("video", nargs="?", help="URL o ID del video")
     parser.add_argument("--save-session", metavar="FICHERO", help="guarda un cURL copiado de Studio")
     parser.add_argument("--from-json", metavar="FICHERO", help="usa una respuesta ya guardada")
     parser.add_argument("--duration", type=int, help="duracion total en segundos, para el hueco final")
     parser.add_argument("--label", action="store_true", help="muestra el sello de cada track")
+    parser.add_argument("--fresh", action="store_true", help="ignora el analisis previo y empieza de cero")
     parser.add_argument(
         "--recognize",
         action=argparse.BooleanOptionalAction,
         default=True,
         help="identifica los huecos con Shazam (activado por defecto)",
     )
+    return parser
+
+
+def main():
+    parser = build_parser()
     args = parser.parse_args()
 
     if args.save_session:
@@ -472,6 +536,8 @@ def main():
         parser.error("indica la URL o el ID del video")
 
     video_id = parse_video_id(args.video)
+    if args.fresh:
+        clear_cache(video_id)
 
     if not args.from_json and args.recognize and recognition_available():
         import recognize_ui
