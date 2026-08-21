@@ -552,9 +552,7 @@ def main():
                 sys.exit(error)
             entries = sorted(entries + found, key=lambda entry: entry["start"])
             gaps = find_gaps(entries, duration)
-            text = render(entries, gaps, video_id, args.label, title)
-            print(text)
-            recognize_ui.offer_clipboard(text)
+            print(render(entries, gaps, video_id, args.label, title))
             return
 
     title = None

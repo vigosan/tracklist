@@ -15,7 +15,10 @@ def status_fields(state, now):
         fraction = 0.0
     else:
         fraction = min(0.95, (now - state["sample_started"]) / SAMPLE_ESTIMATE)
-    percent = min(100, int(100 * (state["sample"] + fraction) / total)) if total else 0
+    if state.get("phase") == "done":
+        percent = 100
+    else:
+        percent = min(100, int(100 * (state["sample"] + fraction) / total)) if total else 0
     gap = state["gap"]
     return {
         "gap": f"{gap[0]}/{gap[1]}" if gap else "-",
@@ -36,6 +39,23 @@ PHASE_LABELS = {
 
 def phase_label(phase):
     return PHASE_LABELS.get(phase, "")
+
+
+def status_text(state, fields):
+    if state["paused"]:
+        return "PAUSA"
+    if state.get("phase") == "done":
+        count = fields["suggestions"]
+        if not count:
+            return "Completado - sin sugerencias"
+        noun = "sugerencia" if count == 1 else "sugerencias"
+        return f"Completado - {count} {noun}"
+    phase = phase_label(state.get("phase"))
+    if phase:
+        return phase
+    if fields["backoff"]:
+        return "rate limit - backoff"
+    return f"Muestra {fields['sample']}"
 
 
 def initial_state(now):
@@ -169,7 +189,7 @@ def run_app(video_id, duration, label):
             await tracklist.recognize_gaps_async(
                 self.video_id, self.gaps, self.on_progress, self.resume
             )
-            self.exit()
+            self.state["phase"] = "done"
 
         def on_progress(self, event):
             kind = event[0]
@@ -221,15 +241,7 @@ def run_app(video_id, duration, label):
             rows = [row.replace("...[/cyan]", f" {spinner}[/cyan]") for row in rows]
             self.query_one("#rows", Static).update("\n".join(rows))
             self.query_one("#tracklist", VerticalScroll).scroll_end(animate=False)
-            phase = phase_label(self.state["phase"])
-            if self.state["paused"]:
-                estado = "PAUSA"
-            elif phase:
-                estado = phase
-            elif fields["backoff"]:
-                estado = "rate limit - backoff"
-            else:
-                estado = f"Muestra {fields['sample']}"
+            estado = status_text(self.state, fields)
             self.query_one("#status-text", Label).update(
                 f"Hueco {fields['gap']}   {estado}\n"
                 f"Sugerencias {fields['suggestions']}   Tiempo {fields['elapsed']}"

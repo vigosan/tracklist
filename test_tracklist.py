@@ -232,6 +232,63 @@ class StatusFieldsTest(unittest.TestCase):
         self.assertEqual(fields["elapsed"], "00:00")
 
 
+class StatusTextTest(unittest.TestCase):
+    def test_finished_run_reports_completion_instead_of_the_last_sample(self):
+        state = {**STATE, "phase": "done", "paused": False}
+        self.assertEqual(
+            recognize_tui.status_text(state, recognize_tui.status_fields(state, 102.0)),
+            "Completado - 8 sugerencias",
+        )
+
+    def test_finished_run_with_no_suggestions_says_so(self):
+        state = {**STATE, "phase": "done", "paused": False, "suggestions": 0}
+        self.assertEqual(
+            recognize_tui.status_text(state, recognize_tui.status_fields(state, 102.0)),
+            "Completado - sin sugerencias",
+        )
+
+    def test_a_single_suggestion_is_not_pluralised(self):
+        state = {**STATE, "phase": "done", "paused": False, "suggestions": 1}
+        self.assertEqual(
+            recognize_tui.status_text(state, recognize_tui.status_fields(state, 102.0)),
+            "Completado - 1 sugerencia",
+        )
+
+    def test_pause_takes_precedence_over_everything(self):
+        state = {**STATE, "phase": "done", "paused": True}
+        self.assertEqual(
+            recognize_tui.status_text(state, recognize_tui.status_fields(state, 102.0)),
+            "PAUSA",
+        )
+
+    def test_running_state_still_reports_the_current_sample(self):
+        state = {**STATE, "phase": "recognizing", "paused": False}
+        self.assertEqual(
+            recognize_tui.status_text(state, recognize_tui.status_fields(state, 102.0)),
+            "Muestra 7/12",
+        )
+
+    def test_loading_phases_keep_their_label(self):
+        state = {**STATE, "phase": "claims", "paused": False}
+        self.assertEqual(
+            recognize_tui.status_text(state, recognize_tui.status_fields(state, 102.0)),
+            "Pidiendo reclamaciones a Studio...",
+        )
+
+    def test_backoff_is_reported_while_running(self):
+        state = {**STATE, "phase": "recognizing", "paused": False, "backoff": True}
+        self.assertEqual(
+            recognize_tui.status_text(state, recognize_tui.status_fields(state, 102.0)),
+            "rate limit - backoff",
+        )
+
+
+class FinishedProgressTest(unittest.TestCase):
+    def test_a_finished_run_fills_the_bar_even_mid_sample(self):
+        state = {**STATE, "phase": "done", "sample": 6, "total": 12}
+        self.assertEqual(recognize_tui.status_fields(state, 102.0)["percent"], 100)
+
+
 class PhaseAndStateTest(unittest.TestCase):
     def test_phase_labels(self):
         self.assertEqual(recognize_tui.phase_label("cookies"), "Leyendo cookies de Brave...")
@@ -312,11 +369,12 @@ class GateTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(gate.active, 1)
 
 
-class CacheTest(unittest.TestCase):
+class IsolatedCache:
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        root = Path(self.tmp.name)
+        super().setUp()
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
         original = (tracklist.CACHE_DIR, tracklist.AUDIO_DIR)
         tracklist.CACHE_DIR = root / "cache"
         tracklist.AUDIO_DIR = root / "audio"
@@ -326,6 +384,8 @@ class CacheTest(unittest.TestCase):
 
         self.addCleanup(restore)
 
+
+class CacheTest(IsolatedCache, unittest.TestCase):
     def test_missing_cache_reads_as_empty(self):
         cache = tracklist.load_cache("vid12345678")
         self.assertEqual(cache, {"samples": {}, "title": None, "duration": None})
@@ -373,7 +433,7 @@ class ArgumentsTest(unittest.TestCase):
         self.assertTrue(tracklist.build_parser().parse_args(["vid12345678", "--fresh"]).fresh)
 
 
-class SingleDownloadTest(unittest.TestCase):
+class SingleDownloadTest(IsolatedCache, unittest.TestCase):
     def test_downloads_once_and_cuts_with_absolute_offsets(self):
         if importlib.util.find_spec("shazamio") is None:
             self.skipTest("shazamio no disponible")
@@ -399,21 +459,11 @@ class SingleDownloadTest(unittest.TestCase):
         self.assertEqual(sorted(cuts), [15, 75, 135, 195, 255, 615, 675, 735, 795, 855])
 
 
-class ResumeTest(unittest.TestCase):
+class ResumeTest(IsolatedCache, unittest.TestCase):
     def setUp(self):
         if importlib.util.find_spec("shazamio") is None:
             self.skipTest("shazamio no disponible")
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        root = Path(self.tmp.name)
-        original = (tracklist.CACHE_DIR, tracklist.AUDIO_DIR)
-        tracklist.CACHE_DIR = root / "cache"
-        tracklist.AUDIO_DIR = root / "audio"
-
-        def restore():
-            tracklist.CACHE_DIR, tracklist.AUDIO_DIR = original
-
-        self.addCleanup(restore)
+        super().setUp()
 
     def run_recognition(self, gaps):
         import shazamio
