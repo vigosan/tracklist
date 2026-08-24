@@ -103,6 +103,86 @@ class MergeSamplesTest(unittest.TestCase):
         )
 
 
+class BaseTitleTest(unittest.TestCase):
+    def test_a_parenthesised_remix_reduces_to_the_plain_title(self):
+        self.assertEqual(tracklist.base_title("Try (MICHAEL WOODS REMIX)"), "try")
+        self.assertEqual(tracklist.base_title("Try"), "try")
+
+    def test_a_dashed_mix_reduces_to_the_plain_title(self):
+        self.assertEqual(tracklist.base_title("Secret - Extended Vocal Mix"), "secret")
+
+    def test_a_title_without_decoration_is_only_normalised(self):
+        self.assertEqual(tracklist.base_title("  Night Train  "), "night train")
+
+    def test_a_title_that_is_only_decoration_keeps_its_text(self):
+        self.assertEqual(tracklist.base_title("(Reprise)"), "(reprise)")
+
+
+class SameTrackTest(unittest.TestCase):
+    def test_the_same_recording_under_two_titles_is_one_track(self):
+        self.assertTrue(tracklist.same_track(
+            {"artist": "Ian Van Dahl", "title": "Try (MICHAEL WOODS REMIX)"},
+            {"artist": "Ian Van Dahl", "title": "Try"},
+        ))
+
+    def test_different_artists_are_never_the_same_track(self):
+        self.assertFalse(tracklist.same_track(
+            {"artist": "Ian Van Dahl", "title": "Try"},
+            {"artist": "Rebel Vision", "title": "Try"},
+        ))
+
+    def test_different_titles_by_one_artist_stay_separate(self):
+        self.assertFalse(tracklist.same_track(
+            {"artist": "YNEL", "title": "Arch in Ya Back"},
+            {"artist": "YNEL", "title": "Night Train"},
+        ))
+
+
+class MergeVariantTitlesTest(unittest.TestCase):
+    def test_consecutive_variants_of_one_track_collapse(self):
+        remix = {"artist": "Ian Van Dahl", "title": "Try (MICHAEL WOODS REMIX)"}
+        plain = {"artist": "Ian Van Dahl", "title": "Try"}
+        merged = tracklist.merge_samples([(393, remix), (453, plain)])
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]["title"], "Try (MICHAEL WOODS REMIX)")
+        self.assertEqual(merged[0]["duration"], 70)
+
+    def test_the_same_track_apart_in_time_stays_two_entries(self):
+        match = {"artist": "X", "title": "Y"}
+        merged = tracklist.merge_samples([(15, match), (75, None), (135, match)])
+        self.assertEqual(len(merged), 2)
+
+
+class DropClaimedSuggestionsTest(unittest.TestCase):
+    def make(self, start, duration):
+        return {"artist": "S", "title": "T", "label": "", "start": start,
+                "duration": duration, "suggested": True}
+
+    def test_a_suggestion_overlapping_a_claim_is_dropped(self):
+        claimed = [{"artist": "Absolom", "title": "Secret - Extended Vocal Mix",
+                    "label": "", "start": 3082, "duration": 300}]
+        suggestion = self.make(3014, 10)
+        self.assertEqual(tracklist.drop_claimed(claimed, [suggestion]), [suggestion])
+
+    def test_a_suggestion_inside_a_claim_is_dropped(self):
+        claimed = [{"artist": "A", "title": "T", "label": "", "start": 100, "duration": 200}]
+        self.assertEqual(tracklist.drop_claimed(claimed, [self.make(150, 10)]), [])
+
+    def test_a_suggestion_clear_of_every_claim_survives(self):
+        claimed = [{"artist": "A", "title": "T", "label": "", "start": 100, "duration": 100}]
+        suggestion = self.make(400, 10)
+        self.assertEqual(tracklist.drop_claimed(claimed, [suggestion]), [suggestion])
+
+    def test_a_suggestion_ending_exactly_where_a_claim_starts_survives(self):
+        claimed = [{"artist": "A", "title": "T", "label": "", "start": 200, "duration": 100}]
+        suggestion = self.make(190, 10)
+        self.assertEqual(tracklist.drop_claimed(claimed, [suggestion]), [suggestion])
+
+    def test_with_no_claims_every_suggestion_survives(self):
+        suggestions = [self.make(10, 10), self.make(100, 10)]
+        self.assertEqual(tracklist.drop_claimed([], suggestions), suggestions)
+
+
 class ParseVideoIdTest(unittest.TestCase):
     def test_extracts_id_from_every_supported_form(self):
         self.assertEqual(tracklist.parse_video_id("https://www.youtube.com/watch?v=_6r0Kd41jfs"), "_6r0Kd41jfs")

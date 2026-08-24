@@ -328,6 +328,29 @@ class Gate:
         self.idle.set()
 
 
+def base_title(title):
+    stripped = re.split(r"\s*[(\[]|\s+-\s+", title.strip(), maxsplit=1)[0].strip()
+    return (stripped or title.strip()).lower()
+
+
+def same_track(one, other):
+    return (
+        one["artist"].strip().lower() == other["artist"].strip().lower()
+        and base_title(one["title"]) == base_title(other["title"])
+    )
+
+
+def drop_claimed(claimed, suggestions):
+    return [
+        suggestion for suggestion in suggestions
+        if not any(
+            suggestion["start"] < entry["start"] + entry["duration"]
+            and entry["start"] < suggestion["start"] + suggestion["duration"]
+            for entry in claimed
+        )
+    ]
+
+
 def merge_samples(samples):
     suggestions = []
     previous = None
@@ -335,7 +358,7 @@ def merge_samples(samples):
         if match is None:
             previous = None
             continue
-        if previous and (previous["artist"], previous["title"]) == (match["artist"], match["title"]):
+        if previous and same_track(previous, match):
             previous["duration"] = offset + SAMPLE_SECONDS - previous["start"]
             continue
         previous = {**match, "label": "", "start": offset, "duration": SAMPLE_SECONDS, "suggested": True}
@@ -574,7 +597,7 @@ def main():
             )
             if error:
                 sys.exit(error)
-            entries = sorted(entries + found, key=lambda entry: entry["start"])
+            entries = sorted(entries + drop_claimed(entries, found), key=lambda entry: entry["start"])
             gaps = find_gaps(entries, duration)
             print(render(entries, gaps, video_id, args.label, title))
             return
@@ -618,7 +641,7 @@ def main():
         import recognize_ui
 
         found = recognize_gaps(video_id, gaps, recognize_ui._pentest_progress)
-        entries = sorted(entries + found, key=lambda entry: entry["start"])
+        entries = sorted(entries + drop_claimed(entries, found), key=lambda entry: entry["start"])
         gaps = find_gaps(entries, duration)
         text = render(entries, gaps, video_id, args.label, title)
         print(text)

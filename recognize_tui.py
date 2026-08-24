@@ -275,8 +275,9 @@ def run_app(video_id, duration, label, scan=False):
         def action_copy(self):
             if self.pending is not None:
                 return
+            found = self.suggestions + tracklist.merge_samples(self.rows_state["samples"])
             entries = sorted(
-                self.entries + self.suggestions + tracklist.merge_samples(self.rows_state["samples"]),
+                self.entries + tracklist.drop_claimed(self.entries, found),
                 key=lambda entry: entry["start"],
             )
             text = tracklist.render(
