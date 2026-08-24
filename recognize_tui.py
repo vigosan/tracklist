@@ -235,6 +235,11 @@ def run_app(video_id, duration, label, scan=False):
                 self.rows_state["active"]["matches"] = tracklist.merge_samples(self.rows_state["samples"])
                 self.state.update(sample=self.state["sample"] + 1,
                                   sample_started=time.monotonic(), backoff=False)
+            elif kind == "skip":
+                active = self.rows_state["active"]
+                if active is not None and active["total"] > active["sample"]:
+                    active["total"] -= 1
+                    self.state["total"] = max(self.state["total"] - 1, self.state["sample"])
             elif kind == "backoff":
                 self.rows_state["active"]["backoff"] = True
                 self.state["backoff"] = True

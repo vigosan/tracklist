@@ -33,6 +33,9 @@ START_WORKERS = 3
 MAX_WORKERS = 3
 RECOVER_AFTER = 6
 SAMPLE_PACING = 0.5
+BACKOFF_START = 3
+BACKOFF_CEILING = 30
+BACKOFF_RETRIES = 4
 DROP_HEADERS = {"content-length", "host", "x-youtube-ad-signals", "priority"}
 
 
@@ -294,6 +297,17 @@ def plan_samples(start, end):
     return list(range(start + SAMPLE_LEAD, end - SAMPLE_SECONDS + 1, SAMPLE_INTERVAL))
 
 
+def backoff_delay(failures):
+    return min(BACKOFF_CEILING, BACKOFF_START * 2 ** failures)
+
+
+def can_skip(samples):
+    if len(samples) < 2:
+        return False
+    (_, previous), (_, last) = samples[-2], samples[-1]
+    return bool(previous and last and same_track(previous, last))
+
+
 class Limiter:
     def __init__(self):
         self.workers = START_WORKERS
@@ -441,36 +455,36 @@ def recognize_gaps_async(video_id, gaps, progress, resume=None):
                 gate = Gate(limiter)
                 warned = False
 
-                async def handle(offset):
+                async def recognize_sample(sample):
                     nonlocal warned
+                    for failures in range(BACKOFF_RETRIES):
+                        await gate.acquire()
+                        try:
+                            return await shazam.recognize_song(str(sample))
+                        except FailedDecodeJson:
+                            if not warned:
+                                warned = True
+                                progress(("backoff",))
+                            limiter.throttle()
+                        except Exception:
+                            return {}
+                        finally:
+                            gate.release()
+                        await asyncio.sleep(backoff_delay(failures))
+                    return {}
+
+                async def handle(offset):
                     if offset in cached_samples:
                         bisect.insort(samples, (offset, cached_samples[offset]), key=lambda item: item[0])
                         progress(("sample", offset, cached_samples[offset]))
                         return
                     if resume is not None:
                         await resume.wait()
-                    await gate.acquire()
-                    try:
-                        sample = await asyncio.to_thread(cut_sample, source, offset, directory)
-                        try:
-                            result = await shazam.recognize_song(str(sample))
-                        except FailedDecodeJson:
-                            if not warned:
-                                warned = True
-                                progress(("backoff",))
-                            limiter.throttle()
-                            await asyncio.sleep(30)
-                            try:
-                                result = await shazam.recognize_song(str(sample))
-                            except FailedDecodeJson:
-                                result = {}
-                        except Exception:
-                            result = {}
-                        else:
-                            limiter.reward()
-                    finally:
-                        gate.release()
+                    sample = await asyncio.to_thread(cut_sample, source, offset, directory)
+                    result = await recognize_sample(sample)
                     track = result.get("track")
+                    if track:
+                        limiter.reward()
                     match = None
                     if track:
                         match = {"artist": track.get("subtitle", "?"), "title": track.get("title", "?")}
@@ -479,7 +493,13 @@ def recognize_gaps_async(video_id, gaps, progress, resume=None):
                     progress(("sample", offset, match))
                     await asyncio.sleep(SAMPLE_PACING)
 
-                await asyncio.gather(*[handle(offset) for offset in plan_samples(start, end)])
+                pending = plan_samples(start, end)
+                while pending:
+                    batch, pending = pending[:limiter.workers], pending[limiter.workers:]
+                    await asyncio.gather(*[handle(offset) for offset in batch])
+                    if pending and pending[0] not in cached_samples and can_skip(samples):
+                        skipped, pending = pending[0], pending[1:]
+                        progress(("skip", skipped))
                 suggestions += merge_samples(samples)
         progress(("done", len(suggestions), int(time.monotonic() - began)))
         return suggestions
