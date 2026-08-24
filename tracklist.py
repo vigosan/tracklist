@@ -446,9 +446,18 @@ def recognize_gaps_async(video_id, gaps, progress, resume=None):
             if resume is not None:
                 await resume.wait()
             cached_samples = load_cache(video_id)["samples"]
+            planned = [offset for start, end in gaps for offset in plan_samples(start, end)]
+            reused = sum(1 for offset in planned if offset in cached_samples)
+            if reused:
+                progress(("cached", reused, len(planned)))
             source = audio_path(video_id)
-            if not source.exists():
+            if source.exists():
+                progress(("download", "cached"))
+            else:
+                progress(("download", "start"))
                 source = await asyncio.to_thread(download_audio, video_id, directory)
+                if source is not None:
+                    progress(("download", "done"))
             if source is None:
                 progress(("done", 0, int(time.monotonic() - began)))
                 return []
@@ -459,12 +468,12 @@ def recognize_gaps_async(video_id, gaps, progress, resume=None):
                 gate = Gate(limiter)
                 warned = False
 
-                async def recognize_sample(sample):
+                async def recognize_sample(sample, offset):
                     nonlocal warned
                     for failures in range(BACKOFF_RETRIES):
                         await gate.acquire()
                         try:
-                            return await shazam.recognize_song(str(sample))
+                            result = await shazam.recognize_song(str(sample))
                         except FailedDecodeJson:
                             if not warned:
                                 warned = True
@@ -472,6 +481,10 @@ def recognize_gaps_async(video_id, gaps, progress, resume=None):
                             limiter.throttle()
                         except Exception:
                             return {}
+                        else:
+                            if failures:
+                                progress(("resolved", offset))
+                            return result
                         finally:
                             gate.release()
                         await asyncio.sleep(backoff_delay(failures))
@@ -485,7 +498,7 @@ def recognize_gaps_async(video_id, gaps, progress, resume=None):
                     if resume is not None:
                         await resume.wait()
                     sample = await asyncio.to_thread(cut_sample, source, offset, directory)
-                    result = await recognize_sample(sample)
+                    result = await recognize_sample(sample, offset)
                     track = result.get("track")
                     if track:
                         limiter.reward()

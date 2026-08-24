@@ -217,8 +217,41 @@ class PentestLineTest(unittest.TestCase):
             "[+] 01:15 Duran Duran - Too Late Marlene",
         )
         self.assertEqual(recognize_ui.pentest_line(("sample", 135, None)), "[-] 02:15 sin match")
-        self.assertEqual(recognize_ui.pentest_line(("backoff",)), "[!] rate limit - backoff 30s")
+        self.assertEqual(recognize_ui.pentest_line(("backoff",)), "[!] rate limit - esperando para reintentar")
         self.assertEqual(recognize_ui.pentest_line(("done", 8, 552)), "[*] 8 sugerencias en 09:12")
+
+
+class VerboseLogTest(unittest.TestCase):
+    def test_it_says_how_many_claims_studio_returned(self):
+        self.assertEqual(recognize_ui.pentest_line(("claims", 18)), "[*] 18 reclamaciones de Content ID")
+
+    def test_a_single_claim_is_not_pluralised(self):
+        self.assertEqual(recognize_ui.pentest_line(("claims", 1)), "[*] 1 reclamacion de Content ID")
+
+    def test_it_says_when_the_video_is_not_claimed(self):
+        self.assertEqual(
+            recognize_ui.pentest_line(("claims", 0)),
+            "[*] sin reclamaciones: se analiza el video entero con Shazam",
+        )
+
+    def test_it_announces_the_download_and_its_end(self):
+        self.assertEqual(recognize_ui.pentest_line(("download", "start")), "[*] descargando audio...")
+        self.assertEqual(recognize_ui.pentest_line(("download", "done")), "[*] audio descargado")
+
+    def test_it_says_when_the_audio_was_already_on_disk(self):
+        self.assertEqual(recognize_ui.pentest_line(("download", "cached")), "[*] audio ya descargado")
+
+    def test_it_reports_how_much_is_reused_on_resume(self):
+        self.assertEqual(
+            recognize_ui.pentest_line(("cached", 19, 54)),
+            "[*] 19/54 muestras ya analizadas, faltan 35",
+        )
+
+    def test_a_recovered_backoff_is_reported_so_the_warning_is_not_left_hanging(self):
+        self.assertEqual(recognize_ui.pentest_line(("resolved", 795)), "[*] 13:15 recuperado tras el backoff")
+
+    def test_an_unknown_event_still_prints_nothing(self):
+        self.assertIsNone(recognize_ui.pentest_line(("cualquier-cosa",)))
 
 
 ENTRY = {"artist": "A", "title": "T", "label": "", "start": 0, "duration": 60}

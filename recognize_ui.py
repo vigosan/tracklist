@@ -14,8 +14,26 @@ def pentest_line(event):
         if match is None:
             return f"[-] {tracklist.hhmmss(offset)} sin match"
         return f"[+] {tracklist.hhmmss(offset)} {match['artist']} - {match['title']}"
+    if kind == "claims":
+        count = event[1]
+        if not count:
+            return "[*] sin reclamaciones: se analiza el video entero con Shazam"
+        noun = "reclamacion" if count == 1 else "reclamaciones"
+        return f"[*] {count} {noun} de Content ID"
+    if kind == "download":
+        stage = event[1]
+        if stage == "start":
+            return "[*] descargando audio..."
+        if stage == "cached":
+            return "[*] audio ya descargado"
+        return "[*] audio descargado"
+    if kind == "cached":
+        _, done, total = event
+        return f"[*] {done}/{total} muestras ya analizadas, faltan {total - done}"
+    if kind == "resolved":
+        return f"[*] {tracklist.hhmmss(event[1])} recuperado tras el backoff"
     if kind == "backoff":
-        return "[!] rate limit - backoff 30s"
+        return "[!] rate limit - esperando para reintentar"
     if kind == "done":
         _, count, seconds = event
         return f"[*] {count} sugerencias en {tracklist.hhmmss(seconds)}"

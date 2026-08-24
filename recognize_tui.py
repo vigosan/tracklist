@@ -157,9 +157,11 @@ def run_app(video_id, duration, label):
 
         async def load(self):
             self.state["phase"] = "claims"
+            self.log_line("[*] consultando Content ID en YouTube Studio...")
             self.session, self.entries = await asyncio.to_thread(
                 tracklist.try_claims, self.video_id
             )
+            self.on_progress(("claims", len(self.entries)))
             self.state["phase"] = "video" if self.entries else "probe"
             if self.duration is None:
                 await self.resolve_duration()
@@ -170,8 +172,16 @@ def run_app(video_id, duration, label):
                 self.gaps = tracklist.find_gaps(self.entries, self.duration)
             else:
                 self.gaps = tracklist.scan_gaps(self.duration)
+            missing = sum(end - start for start, end in self.gaps)
+            self.log_line(
+                f"[*] {tracklist.hhmmss(self.duration)} de video, "
+                f"{len(self.gaps)} huecos ({tracklist.hhmmss(missing)}) por analizar"
+            )
             self.state["phase"] = "recognizing"
             self.loaded = True
+
+        def log_line(self, text):
+            self.query_one("#log", RichLog).write(text)
 
         async def resolve_duration(self):
             cached = tracklist.load_cache(self.video_id)
@@ -217,13 +227,15 @@ def run_app(video_id, duration, label):
             elif kind == "sample":
                 _, offset, match = event
                 self.rows_state["samples"].append((offset, match))
-                self.rows_state["active"]["sample"] += 1
-                self.rows_state["active"]["backoff"] = False
-                self.rows_state["active"]["matches"] = tracklist.merge_samples(self.rows_state["samples"])
+                if self.rows_state["active"] is not None:
+                    self.rows_state["active"]["sample"] += 1
+                    self.rows_state["active"]["backoff"] = False
+                    self.rows_state["active"]["matches"] = tracklist.merge_samples(self.rows_state["samples"])
                 self.state.update(sample=self.state["sample"] + 1,
                                   sample_started=time.monotonic(), backoff=False)
             elif kind == "backoff":
-                self.rows_state["active"]["backoff"] = True
+                if self.rows_state["active"] is not None:
+                    self.rows_state["active"]["backoff"] = True
                 self.state["backoff"] = True
             elif kind == "done":
                 self.close_active()
