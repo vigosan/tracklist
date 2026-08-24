@@ -14,8 +14,6 @@ def pentest_line(event):
         if match is None:
             return f"[-] {tracklist.hhmmss(offset)} sin match"
         return f"[+] {tracklist.hhmmss(offset)} {match['artist']} - {match['title']}"
-    if kind == "skip":
-        return f"[~] {tracklist.hhmmss(event[1])} omitido (pista ya confirmada)"
     if kind == "backoff":
         return "[!] rate limit - backoff 30s"
     if kind == "done":

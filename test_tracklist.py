@@ -218,7 +218,6 @@ class PentestLineTest(unittest.TestCase):
         )
         self.assertEqual(recognize_ui.pentest_line(("sample", 135, None)), "[-] 02:15 sin match")
         self.assertEqual(recognize_ui.pentest_line(("backoff",)), "[!] rate limit - backoff 30s")
-        self.assertEqual(recognize_ui.pentest_line(("skip", 795)), "[~] 13:15 omitido (pista ya confirmada)")
         self.assertEqual(recognize_ui.pentest_line(("done", 8, 552)), "[*] 8 sugerencias en 09:12")
 
 
@@ -440,34 +439,6 @@ class BackoffDelayTest(unittest.TestCase):
     def test_the_wait_never_grows_past_the_ceiling(self):
         self.assertEqual(tracklist.backoff_delay(99), tracklist.BACKOFF_CEILING)
 
-
-class SkipConfirmedTest(unittest.TestCase):
-    def test_two_matching_samples_in_a_row_let_the_next_be_skipped(self):
-        match = {"artist": "Melanie C", "title": "I Turn To You"}
-        self.assertTrue(tracklist.can_skip([(675, match), (735, match)]))
-
-    def test_a_single_match_is_not_enough_to_skip(self):
-        match = {"artist": "Melanie C", "title": "I Turn To You"}
-        self.assertFalse(tracklist.can_skip([(675, match)]))
-
-    def test_two_different_tracks_never_allow_a_skip(self):
-        self.assertFalse(tracklist.can_skip([
-            (675, {"artist": "A", "title": "T"}),
-            (735, {"artist": "B", "title": "U"}),
-        ]))
-
-    def test_a_miss_prevents_skipping(self):
-        match = {"artist": "A", "title": "T"}
-        self.assertFalse(tracklist.can_skip([(675, match), (735, None)]))
-
-    def test_title_variants_of_one_track_still_allow_a_skip(self):
-        self.assertTrue(tracklist.can_skip([
-            (675, {"artist": "Ian Van Dahl", "title": "Try (MICHAEL WOODS REMIX)"}),
-            (735, {"artist": "Ian Van Dahl", "title": "Try"}),
-        ]))
-
-    def test_no_samples_yet_means_no_skip(self):
-        self.assertFalse(tracklist.can_skip([]))
 
 
 class GateTest(unittest.IsolatedAsyncioTestCase):
@@ -707,30 +678,37 @@ class ResumeTest(IsolatedCache, unittest.TestCase):
         self.run_recognition([(0, 270)], distinct=True)
         self.assertEqual(sorted(self.cuts), [195, 255])
 
-    def test_a_confirmed_track_lets_later_samples_be_skipped(self):
-        events = self.run_recognition([(0, 270)])
-        skipped = [event[1] for event in events if event[0] == "skip"]
-        self.assertTrue(skipped)
-        self.assertNotIn(15, skipped)
+    def test_every_sample_is_launched_without_waiting_for_a_batch(self):
+        import shazamio
 
-    def test_skipping_never_runs_away_without_re_checking(self):
-        events = self.run_recognition([(0, 1200)])
-        kinds = [event[0] for event in events if event[0] in ("sample", "skip")]
-        runs = []
-        for kind in kinds:
-            if kind == "skip" and runs and runs[-1][0] == "skip":
-                runs[-1] = ("skip", runs[-1][1] + 1)
-            else:
-                runs.append((kind, 1))
-        longest = max((count for kind, count in runs if kind == "skip"), default=0)
-        self.assertLessEqual(longest, 1)
+        peak = {"value": 0, "active": 0}
 
-    def test_a_cached_sample_is_never_skipped(self):
-        self.run_recognition([(0, 270)])
-        cached = set(tracklist.load_cache("vid12345678")["samples"])
-        events = self.run_recognition([(0, 270)])
-        skipped = {event[1] for event in events if event[0] == "skip"}
-        self.assertFalse(skipped & cached)
+        idle = {"value": 0.0}
+
+        class UnevenShazam:
+            def __init__(self):
+                self.calls = 0
+
+            async def recognize_song(self, path):
+                self.calls += 1
+                peak["active"] += 1
+                peak["value"] = max(peak["value"], peak["active"])
+                await asyncio.sleep(0.30 if self.calls % 3 == 0 else 0.02)
+                peak["active"] -= 1
+                if peak["active"] == 0:
+                    idle["value"] += 1
+                return {"track": {"subtitle": f"A{self.calls}", "title": f"T{self.calls}"}}
+
+        original = (tracklist.download_audio, tracklist.cut_sample, shazamio.Shazam)
+        tracklist.download_audio = lambda video_id, directory: Path("/tmp/a.mp3")
+        tracklist.cut_sample = lambda source, offset, directory: Path("/tmp/s.wav")
+        shazamio.Shazam = UnevenShazam
+        try:
+            tracklist.recognize_gaps("vid12345678", [(0, 1200)], lambda event: None)
+        finally:
+            tracklist.download_audio, tracklist.cut_sample, shazamio.Shazam = original
+        self.assertEqual(peak["value"], tracklist.MAX_WORKERS)
+        self.assertLessEqual(idle["value"], 3)
 
     def test_cached_samples_still_reach_the_progress_callback(self):
         self.run_recognition([(0, 150)])

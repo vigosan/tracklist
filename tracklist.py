@@ -301,13 +301,6 @@ def backoff_delay(failures):
     return min(BACKOFF_CEILING, BACKOFF_START * 2 ** failures)
 
 
-def can_skip(samples):
-    if len(samples) < 2:
-        return False
-    (_, previous), (_, last) = samples[-2], samples[-1]
-    return bool(previous and last and same_track(previous, last))
-
-
 class Limiter:
     def __init__(self):
         self.workers = START_WORKERS
@@ -493,13 +486,7 @@ def recognize_gaps_async(video_id, gaps, progress, resume=None):
                     progress(("sample", offset, match))
                     await asyncio.sleep(SAMPLE_PACING)
 
-                pending = plan_samples(start, end)
-                while pending:
-                    batch, pending = pending[:limiter.workers], pending[limiter.workers:]
-                    await asyncio.gather(*[handle(offset) for offset in batch])
-                    if pending and pending[0] not in cached_samples and can_skip(samples):
-                        skipped, pending = pending[0], pending[1:]
-                        progress(("skip", skipped))
+                await asyncio.gather(*[handle(offset) for offset in plan_samples(start, end)])
                 suggestions += merge_samples(samples)
         progress(("done", len(suggestions), int(time.monotonic() - began)))
         return suggestions
