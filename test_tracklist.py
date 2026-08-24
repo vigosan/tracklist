@@ -217,8 +217,47 @@ class PentestLineTest(unittest.TestCase):
             "[+] 01:15 Duran Duran - Too Late Marlene",
         )
         self.assertEqual(recognize_ui.pentest_line(("sample", 135, None)), "[-] 02:15 sin match")
-        self.assertEqual(recognize_ui.pentest_line(("backoff",)), "[!] rate limit - esperando para reintentar")
+        self.assertEqual(
+            recognize_ui.pentest_line(("backoff", 3, 1)),
+            "[!] rate limit - esperando 3s (intento 1/4)",
+        )
         self.assertEqual(recognize_ui.pentest_line(("done", 8, 552)), "[*] 8 sugerencias en 09:12")
+
+
+class BackoffCountdownTest(unittest.TestCase):
+    def test_the_log_says_how_long_it_waits_and_which_attempt(self):
+        self.assertEqual(
+            recognize_ui.pentest_line(("backoff", 12, 3)),
+            "[!] rate limit - esperando 12s (intento 3/4)",
+        )
+
+    def test_the_active_row_counts_the_wait_down(self):
+        active = {"index": 0, "sample": 2, "total": 4, "matches": [], "backoff": 8}
+        rows = recognize_ui.tui_rows([ENTRY], GAPS, {}, active)
+        self.assertEqual(rows[1], "[cyan]  - 01:00 buscando (muestra 2/4) - backoff 8s...[/cyan]")
+
+    def test_a_row_not_waiting_shows_no_backoff(self):
+        active = {"index": 0, "sample": 2, "total": 4, "matches": [], "backoff": 0}
+        rows = recognize_ui.tui_rows([ENTRY], GAPS, {}, active)
+        self.assertEqual(rows[1], "[cyan]  - 01:00 buscando (muestra 2/4)...[/cyan]")
+
+    def test_the_status_panel_counts_the_wait_down(self):
+        state = {**STATE, "phase": "recognizing", "paused": False, "backoff_until": 112.0}
+        fields = recognize_tui.status_fields(state, 102.0)
+        self.assertEqual(recognize_tui.status_text(state, fields), "rate limit - backoff 10s")
+
+    def test_the_countdown_never_goes_negative(self):
+        state = {**STATE, "phase": "recognizing", "paused": False, "backoff_until": 100.0}
+        fields = recognize_tui.status_fields(state, 130.0)
+        self.assertFalse(fields["backoff"])
+
+
+class LimiterLogTest(unittest.TestCase):
+    def test_it_reports_when_concurrency_drops(self):
+        self.assertEqual(recognize_ui.pentest_line(("workers", 1)), "[!] bajando a 1 peticion simultanea")
+
+    def test_it_reports_when_concurrency_recovers(self):
+        self.assertEqual(recognize_ui.pentest_line(("workers", 3)), "[*] subiendo a 3 peticiones simultaneas")
 
 
 class VerboseLogTest(unittest.TestCase):
@@ -326,9 +365,9 @@ class StatusFieldsTest(unittest.TestCase):
         self.assertFalse(fields["backoff"])
 
     def test_progress_freezes_during_backoff(self):
-        fields = recognize_tui.status_fields({**STATE, "backoff": True}, 160.0)
+        fields = recognize_tui.status_fields({**STATE, "backoff_until": 175.0}, 160.0)
         self.assertEqual(fields["percent"], 50)
-        self.assertTrue(fields["backoff"])
+        self.assertEqual(fields["backoff"], 15)
 
     def test_interpolation_never_reaches_the_next_sample(self):
         self.assertEqual(recognize_tui.status_fields(STATE, 999.0)["percent"], 57)
@@ -391,10 +430,10 @@ class StatusTextTest(unittest.TestCase):
         )
 
     def test_backoff_is_reported_while_running(self):
-        state = {**STATE, "phase": "recognizing", "paused": False, "backoff": True}
+        state = {**STATE, "phase": "recognizing", "paused": False, "backoff_until": 105.0}
         self.assertEqual(
             recognize_tui.status_text(state, recognize_tui.status_fields(state, 102.0)),
-            "rate limit - backoff",
+            "rate limit - backoff 3s",
         )
 
 

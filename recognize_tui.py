@@ -11,7 +11,8 @@ SPINNER = "⣾⣽⣻⢿⡿⣟⣯⣷"
 
 def status_fields(state, now):
     total = state["total"]
-    if state["backoff"]:
+    remaining = max(0, int(round((state.get("backoff_until") or 0) - now)))
+    if remaining:
         fraction = 0.0
     else:
         fraction = min(0.95, (now - state["sample_started"]) / SAMPLE_ESTIMATE)
@@ -26,7 +27,7 @@ def status_fields(state, now):
         "sample": f"{min(state['sample'] + 1, total)}/{total}" if total else "-",
         "suggestions": state["suggestions"],
         "elapsed": tracklist.hhmmss(int((state.get("ended") or now) - state["began"])),
-        "backoff": state["backoff"],
+        "backoff": remaining,
     }
 
 
@@ -55,14 +56,14 @@ def status_text(state, fields):
     if phase:
         return phase
     if fields["backoff"]:
-        return "rate limit - backoff"
+        return f"rate limit - backoff {fields['backoff']}s"
     return f"Muestra {fields['sample']}"
 
 
 def initial_state(now):
     return {
         "gap": None, "sample": 0, "total": 0, "sample_started": now,
-        "backoff": False, "suggestions": 0, "began": now,
+        "backoff": False, "backoff_until": None, "suggestions": 0, "began": now,
         "phase": "cookies", "paused": False, "ended": None,
     }
 
@@ -220,23 +221,24 @@ def run_app(video_id, duration, label):
                 planned = len(tracklist.plan_samples(start, end))
                 self.rows_state["active"] = {
                     "index": index - 1, "sample": 0, "total": planned,
-                    "matches": [], "backoff": False,
+                    "matches": [], "backoff": 0,
                 }
                 self.state.update(gap=(index, total), sample=0, total=planned,
-                                  sample_started=time.monotonic(), backoff=False)
+                                  sample_started=time.monotonic(), backoff_until=None)
             elif kind == "sample":
                 _, offset, match = event
                 self.rows_state["samples"].append((offset, match))
+                self.state["backoff_until"] = None
                 if self.rows_state["active"] is not None:
                     self.rows_state["active"]["sample"] += 1
-                    self.rows_state["active"]["backoff"] = False
                     self.rows_state["active"]["matches"] = tracklist.merge_samples(self.rows_state["samples"])
                 self.state.update(sample=self.state["sample"] + 1,
-                                  sample_started=time.monotonic(), backoff=False)
+                                  sample_started=time.monotonic())
             elif kind == "backoff":
-                if self.rows_state["active"] is not None:
-                    self.rows_state["active"]["backoff"] = True
-                self.state["backoff"] = True
+                _, seconds, _attempt = event
+                self.state["backoff_until"] = time.monotonic() + seconds
+            elif kind == "resolved":
+                self.state["backoff_until"] = None
             elif kind == "done":
                 self.close_active()
                 self.state["gap"] = None
@@ -259,6 +261,8 @@ def run_app(video_id, duration, label):
             self.frame += 1
             spinner = SPINNER[self.frame % len(SPINNER)]
             fields = status_fields(self.state, time.monotonic())
+            if self.rows_state["active"] is not None:
+                self.rows_state["active"]["backoff"] = fields["backoff"]
             rows = recognize_ui.tui_rows(
                 self.entries, self.gaps, self.rows_state["completed"], self.rows_state["active"]
             )

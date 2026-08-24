@@ -32,8 +32,14 @@ def pentest_line(event):
         return f"[*] {done}/{total} muestras ya analizadas, faltan {total - done}"
     if kind == "resolved":
         return f"[*] {tracklist.hhmmss(event[1])} recuperado tras el backoff"
+    if kind == "workers":
+        count = event[1]
+        if count == 1:
+            return "[!] bajando a 1 peticion simultanea"
+        return f"[*] subiendo a {count} peticiones simultaneas"
     if kind == "backoff":
-        return "[!] rate limit - esperando para reintentar"
+        _, seconds, attempt = event
+        return f"[!] rate limit - esperando {seconds}s (intento {attempt}/{tracklist.BACKOFF_RETRIES})"
     if kind == "done":
         _, count, seconds = event
         return f"[*] {count} sugerencias en {tracklist.hhmmss(seconds)}"
@@ -69,7 +75,7 @@ def tui_rows(entries, gaps, completed, active):
             else:
                 status = f"buscando (muestra {active['sample']}/{active['total']})"
             if active["backoff"]:
-                status += " - backoff 30s"
+                status += f" - backoff {active['backoff']}s"
             rows.append((start, f"[cyan]  - {tracklist.hhmmss(start)} {status}...[/cyan]"))
             rows += [(s["start"], entry_line(s)) for s in active["matches"]]
         else:

@@ -466,19 +466,18 @@ def recognize_gaps_async(video_id, gaps, progress, resume=None):
                 samples = []
                 limiter = Limiter()
                 gate = Gate(limiter)
-                warned = False
 
                 async def recognize_sample(sample, offset):
-                    nonlocal warned
                     for failures in range(BACKOFF_RETRIES):
                         await gate.acquire()
                         try:
                             result = await shazam.recognize_song(str(sample))
                         except FailedDecodeJson:
-                            if not warned:
-                                warned = True
-                                progress(("backoff",))
+                            progress(("backoff", backoff_delay(failures), failures + 1))
+                            before = limiter.workers
                             limiter.throttle()
+                            if limiter.workers != before:
+                                progress(("workers", limiter.workers))
                         except Exception:
                             return {}
                         else:
@@ -501,7 +500,10 @@ def recognize_gaps_async(video_id, gaps, progress, resume=None):
                     result = await recognize_sample(sample, offset)
                     track = result.get("track")
                     if track:
+                        before = limiter.workers
                         limiter.reward()
+                        if limiter.workers != before:
+                            progress(("workers", limiter.workers))
                     match = None
                     if track:
                         match = {"artist": track.get("subtitle", "?"), "title": track.get("title", "?")}
