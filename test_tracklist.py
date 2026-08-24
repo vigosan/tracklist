@@ -371,6 +371,18 @@ class FinishedProgressTest(unittest.TestCase):
         self.assertEqual(recognize_tui.status_fields(state, 102.0)["percent"], 100)
 
 
+class FinishedElapsedTest(unittest.TestCase):
+    def test_the_clock_stops_when_the_run_finishes(self):
+        state = {**STATE, "phase": "done", "ended": 110.0}
+        self.assertEqual(recognize_tui.status_fields(state, 110.0)["elapsed"], "01:00")
+        self.assertEqual(recognize_tui.status_fields(state, 9999.0)["elapsed"], "01:00")
+
+    def test_a_running_clock_still_advances(self):
+        state = {**STATE, "phase": "recognizing", "ended": None}
+        self.assertEqual(recognize_tui.status_fields(state, 110.0)["elapsed"], "01:00")
+        self.assertEqual(recognize_tui.status_fields(state, 170.0)["elapsed"], "02:00")
+
+
 class PhaseAndStateTest(unittest.TestCase):
     def test_phase_labels(self):
         self.assertEqual(recognize_tui.phase_label("cookies"), "Leyendo cookies de Brave...")

@@ -25,7 +25,7 @@ def status_fields(state, now):
         "percent": percent,
         "sample": f"{min(state['sample'] + 1, total)}/{total}" if total else "-",
         "suggestions": state["suggestions"],
-        "elapsed": tracklist.hhmmss(int(now - state["began"])),
+        "elapsed": tracklist.hhmmss(int((state.get("ended") or now) - state["began"])),
         "backoff": state["backoff"],
     }
 
@@ -63,7 +63,7 @@ def initial_state(now):
     return {
         "gap": None, "sample": 0, "total": 0, "sample_started": now,
         "backoff": False, "suggestions": 0, "began": now,
-        "phase": "cookies", "paused": False,
+        "phase": "cookies", "paused": False, "ended": None,
     }
 
 
@@ -241,6 +241,7 @@ def run_app(video_id, duration, label, scan=False):
             elif kind == "done":
                 self.close_active()
                 self.state["gap"] = None
+                self.state["ended"] = time.monotonic()
             line = recognize_ui.pentest_line(event)
             if line:
                 self.query_one("#log", RichLog).write(line)
