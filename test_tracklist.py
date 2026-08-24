@@ -540,17 +540,69 @@ class ArgumentsTest(unittest.TestCase):
         self.assertFalse(tracklist.build_parser().parse_args(["vid12345678"]).fresh)
         self.assertTrue(tracklist.build_parser().parse_args(["vid12345678", "--fresh"]).fresh)
 
-    def test_content_id_is_used_unless_scan_is_requested(self):
-        self.assertFalse(tracklist.build_parser().parse_args(["vid12345678"]).scan)
-        self.assertTrue(tracklist.build_parser().parse_args(["vid12345678", "--scan"]).scan)
-
-
-class ScanConflictTest(unittest.TestCase):
-    def test_scanning_without_recognition_is_rejected_instead_of_ignored(self):
+    def test_the_mode_is_detected_instead_of_being_asked_for(self):
         parser = tracklist.build_parser()
         with self.assertRaises(SystemExit):
             with contextlib.redirect_stderr(io.StringIO()):
-                parser.parse_args(["vid12345678", "--scan", "--no-recognize"])
+                parser.parse_args(["vid12345678", "--scan"])
+
+
+
+class TryClaimsTest(unittest.TestCase):
+    def call(self, session_error=None, claims_error=None, response=None):
+        original = (tracklist.fresh_session, tracklist.fetch_claims)
+
+        def fake_session():
+            if session_error:
+                raise session_error
+            return {"headers": {}, "context": {}}
+
+        def fake_claims(video_id, session):
+            if claims_error:
+                raise claims_error
+            return response
+
+        tracklist.fresh_session = fake_session
+        tracklist.fetch_claims = fake_claims
+        try:
+            return tracklist.try_claims("vid12345678")
+        finally:
+            tracklist.fresh_session, tracklist.fetch_claims = original
+
+    def test_a_claimed_video_returns_its_entries(self):
+        response = {"receivedClaims": [{
+            "matchDetails": {"longestMatchStartTimeSeconds": 60, "longestMatchDurationSeconds": 30},
+            "asset": {"metadata": {"soundRecording": {"title": "T", "artists": ["A"]}}},
+        }]}
+        session, entries = self.call(response=response)
+        self.assertIsNotNone(session)
+        self.assertEqual(entries[0]["title"], "T")
+
+    def test_a_video_without_claims_reports_no_entries(self):
+        session, entries = self.call(response={"receivedClaims": []})
+        self.assertEqual(entries, [])
+
+    def test_a_missing_session_falls_back_instead_of_exiting(self):
+        session, entries = self.call(session_error=SystemExit("sin sesion"))
+        self.assertIsNone(session)
+        self.assertEqual(entries, [])
+
+    def test_a_rejected_session_falls_back_instead_of_exiting(self):
+        session, entries = self.call(claims_error=SystemExit("403"))
+        self.assertIsNone(session)
+        self.assertEqual(entries, [])
+
+
+class AutoModeTest(unittest.TestCase):
+    def plan(self, entries, duration):
+        return tracklist.find_gaps(entries, duration) if entries else tracklist.scan_gaps(duration)
+
+    def test_a_claimed_video_only_samples_its_gaps(self):
+        entries = [{"artist": "A", "title": "T", "label": "", "start": 0, "duration": 60}]
+        self.assertEqual(self.plan(entries, 600), [(60, 600)])
+
+    def test_an_unclaimed_video_samples_everything(self):
+        self.assertEqual(self.plan([], 600), [(0, 600)])
 
 
 class ProbeDurationTest(unittest.TestCase):
