@@ -72,12 +72,15 @@ class RefreshHeadersTest(unittest.TestCase):
 
 class PlanSamplesTest(unittest.TestCase):
     def test_samples_every_interval_while_they_fit(self):
-        self.assertEqual(tracklist.plan_samples(0, 90), [15, 75])
-        self.assertEqual(tracklist.plan_samples(120, 210), [135, 195])
+        self.assertEqual(tracklist.plan_samples(0, 120), [15, 105])
+        self.assertEqual(tracklist.plan_samples(120, 300), [135, 225])
 
     def test_sample_that_does_not_fit_is_dropped(self):
-        self.assertEqual(tracklist.plan_samples(0, 84), [15])
+        self.assertEqual(tracklist.plan_samples(0, 114), [15])
         self.assertEqual(tracklist.plan_samples(0, 24), [])
+
+    def test_the_interval_stays_under_the_shortest_gap_it_must_cover(self):
+        self.assertLessEqual(tracklist.SAMPLE_INTERVAL, tracklist.MIN_GAP_SECONDS)
 
 
 class MergeSamplesTest(unittest.TestCase):
@@ -748,7 +751,10 @@ class SingleDownloadTest(IsolatedCache, unittest.TestCase):
             tracklist.download_audio, tracklist.cut_sample, shazamio.Shazam = original
 
         self.assertEqual(len(downloads), 1)
-        self.assertEqual(sorted(cuts), [15, 75, 135, 195, 255, 615, 675, 735, 795, 855])
+        self.assertEqual(
+            sorted(cuts),
+            tracklist.plan_samples(0, 300) + tracklist.plan_samples(600, 900),
+        )
 
 
 class ResumeTest(IsolatedCache, unittest.TestCase):
@@ -796,7 +802,7 @@ class ResumeTest(IsolatedCache, unittest.TestCase):
         match = {"artist": "A", "title": "T"}
         self.assertEqual(
             tracklist.load_cache("vid12345678")["samples"],
-            {15: match, 75: match, 135: match},
+            {offset: match for offset in tracklist.plan_samples(0, 150)},
         )
 
     def test_second_run_reuses_the_audio_instead_of_downloading_again(self):
@@ -812,7 +818,11 @@ class ResumeTest(IsolatedCache, unittest.TestCase):
     def test_only_the_missing_samples_are_recognised_again(self):
         self.run_recognition([(0, 150)], distinct=True)
         self.run_recognition([(0, 270)], distinct=True)
-        self.assertEqual(sorted(self.cuts), [195, 255])
+        already = set(tracklist.plan_samples(0, 150))
+        self.assertEqual(
+            sorted(self.cuts),
+            [o for o in tracklist.plan_samples(0, 270) if o not in already],
+        )
 
     def test_every_sample_is_launched_without_waiting_for_a_batch(self):
         import shazamio
@@ -853,7 +863,7 @@ class ResumeTest(IsolatedCache, unittest.TestCase):
         samples = [event for event in events if event[0] == "sample"]
         self.assertEqual(
             samples,
-            [("sample", 15, match), ("sample", 75, match), ("sample", 135, match)],
+            [("sample", offset, match) for offset in tracklist.plan_samples(0, 150)],
         )
 
     def test_a_fully_cached_run_still_yields_its_suggestions(self):
