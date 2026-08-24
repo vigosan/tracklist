@@ -284,6 +284,12 @@ def find_gaps(entries, total=None):
     return gaps
 
 
+def scan_gaps(duration):
+    if not duration or duration < SAMPLE_LEAD + SAMPLE_SECONDS:
+        return []
+    return [(0, duration)]
+
+
 def plan_samples(start, end):
     return list(range(start + SAMPLE_LEAD, end - SAMPLE_SECONDS + 1, SAMPLE_INTERVAL))
 
@@ -335,6 +341,22 @@ def merge_samples(samples):
         previous = {**match, "label": "", "start": offset, "duration": SAMPLE_SECONDS, "suggested": True}
         suggestions.append(previous)
     return suggestions
+
+
+def probe_duration(video_id):
+    command = [
+        "yt-dlp", "--quiet", "--no-warnings", "--skip-download",
+        "--print", "duration",
+        "--cookies-from-browser", "brave",
+        f"https://www.youtube.com/watch?v={video_id}",
+    ]
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode != 0:
+        return None
+    try:
+        return int(float(result.stdout.strip()))
+    except ValueError:
+        return None
 
 
 def download_audio(video_id, directory):
@@ -510,7 +532,9 @@ def build_parser():
     parser.add_argument("--duration", type=int, help="duracion total en segundos, para el hueco final")
     parser.add_argument("--label", action="store_true", help="muestra el sello de cada track")
     parser.add_argument("--fresh", action="store_true", help="ignora el analisis previo y empieza de cero")
-    parser.add_argument(
+    modo = parser.add_mutually_exclusive_group()
+    modo.add_argument("--scan", action="store_true", help="identifica el video entero con Shazam, sin usar Content ID")
+    modo.add_argument(
         "--recognize",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -546,7 +570,7 @@ def main():
             import recognize_tui
 
             found, entries, gaps, duration, title, error = recognize_tui.run_app(
-                video_id, args.duration, args.label
+                video_id, args.duration, args.label, args.scan
             )
             if error:
                 sys.exit(error)
@@ -557,6 +581,24 @@ def main():
 
     title = None
     duration = args.duration
+    if args.scan:
+        if not recognition_available():
+            sys.exit("--scan necesita Shazam: .venv/bin/pip install audioop-lts shazamio==0.4.0.1")
+        if duration is None:
+            duration = load_cache(video_id)["duration"] or probe_duration(video_id)
+        if duration is None:
+            sys.exit("No se pudo leer la duracion del video.")
+        gaps = scan_gaps(duration)
+        if not gaps:
+            sys.exit("El video es demasiado corto para analizarlo.")
+        import recognize_ui
+
+        found = recognize_gaps(video_id, gaps, recognize_ui._pentest_progress)
+        entries = sorted(found, key=lambda entry: entry["start"])
+        text = render(entries, find_gaps(entries, duration), video_id, args.label, title)
+        print(text)
+        recognize_ui.offer_clipboard(text)
+        return
     if args.from_json:
         response = json.loads(Path(args.from_json).read_text())
     else:

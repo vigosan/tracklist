@@ -34,6 +34,7 @@ PHASE_LABELS = {
     "cookies": "Leyendo cookies de Brave...",
     "claims": "Pidiendo reclamaciones a Studio...",
     "video": "Pidiendo datos del video...",
+    "probe": "Leyendo duracion del video...",
 }
 
 
@@ -66,7 +67,7 @@ def initial_state(now):
     }
 
 
-def run_app(video_id, duration, label):
+def run_app(video_id, duration, label, scan=False):
     from textual.app import App, ComposeResult
     from textual.containers import Horizontal, Vertical, VerticalScroll
     from textual.widgets import Footer, Input, Label, ProgressBar, RichLog, Static
@@ -90,8 +91,9 @@ def run_app(video_id, duration, label):
             ("escape", "cancel", "Cancelar"),
         ]
 
-        def __init__(self, video_id, duration, label):
+        def __init__(self, video_id, duration, label, scan):
             super().__init__()
+            self.scan = scan
             self.video_id = video_id
             self.entries = []
             self.gaps = []
@@ -155,6 +157,9 @@ def run_app(video_id, duration, label):
             self.exit()
 
         async def load(self):
+            if self.scan:
+                await self.load_scan()
+                return
             self.state["phase"] = "cookies"
             if self.session is None:
                 self.session = await asyncio.to_thread(tracklist.fresh_session)
@@ -182,6 +187,25 @@ def run_app(video_id, duration, label):
                             self.video_id, self.title_line, self.duration,
                         )
             self.gaps = tracklist.find_gaps(self.entries, self.duration)
+            self.state["phase"] = "recognizing"
+            self.loaded = True
+
+        async def load_scan(self):
+            self.state["phase"] = "probe"
+            self.entries = []
+            if self.duration is None:
+                cached = tracklist.load_cache(self.video_id)
+                self.duration = cached["duration"]
+                self.title_line = cached["title"]
+            if self.duration is None:
+                self.duration = await asyncio.to_thread(tracklist.probe_duration, self.video_id)
+                if self.duration is None:
+                    self.error = "No se pudo leer la duracion del video."
+                    return
+                await asyncio.to_thread(
+                    tracklist.save_video_details, self.video_id, self.title_line, self.duration
+                )
+            self.gaps = tracklist.scan_gaps(self.duration)
             self.state["phase"] = "recognizing"
             self.loaded = True
 
@@ -340,7 +364,7 @@ def run_app(video_id, duration, label):
             self.duration = None
             self.restart()
 
-    app = RecognizeApp(video_id, duration, label)
+    app = RecognizeApp(video_id, duration, label, scan)
     app.run()
     app.close_active()
     return app.suggestions, app.entries, app.gaps, app.duration, app.title_line, app.error

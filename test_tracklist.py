@@ -1,5 +1,7 @@
 import asyncio
+import contextlib
 import hashlib
+import io
 import importlib.util
 import tempfile
 import unittest
@@ -431,6 +433,66 @@ class ArgumentsTest(unittest.TestCase):
     def test_analysis_is_resumed_unless_fresh_is_requested(self):
         self.assertFalse(tracklist.build_parser().parse_args(["vid12345678"]).fresh)
         self.assertTrue(tracklist.build_parser().parse_args(["vid12345678", "--fresh"]).fresh)
+
+    def test_content_id_is_used_unless_scan_is_requested(self):
+        self.assertFalse(tracklist.build_parser().parse_args(["vid12345678"]).scan)
+        self.assertTrue(tracklist.build_parser().parse_args(["vid12345678", "--scan"]).scan)
+
+
+class ScanConflictTest(unittest.TestCase):
+    def test_scanning_without_recognition_is_rejected_instead_of_ignored(self):
+        parser = tracklist.build_parser()
+        with self.assertRaises(SystemExit):
+            with contextlib.redirect_stderr(io.StringIO()):
+                parser.parse_args(["vid12345678", "--scan", "--no-recognize"])
+
+
+class ProbeDurationTest(unittest.TestCase):
+    def run_probe(self, stdout, returncode=0):
+        calls = []
+
+        class Result:
+            def __init__(self):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        original = tracklist.subprocess.run
+        tracklist.subprocess.run = lambda command, **kwargs: calls.append(command) or Result()
+        try:
+            return tracklist.probe_duration("vid12345678"), calls[0]
+        finally:
+            tracklist.subprocess.run = original
+
+    def test_reads_the_duration_yt_dlp_reports(self):
+        duration, command = self.run_probe("3552\n")
+        self.assertEqual(duration, 3552)
+        self.assertIn("--print", command)
+        self.assertIn("https://www.youtube.com/watch?v=vid12345678", command)
+
+    def test_a_fractional_duration_is_truncated_to_whole_seconds(self):
+        self.assertEqual(self.run_probe("3552.44\n")[0], 3552)
+
+    def test_a_failed_probe_reports_no_duration(self):
+        self.assertIsNone(self.run_probe("", returncode=1)[0])
+
+    def test_unparseable_output_reports_no_duration(self):
+        self.assertIsNone(self.run_probe("NA\n")[0])
+
+
+class ScanPhaseLabelTest(unittest.TestCase):
+    def test_the_probe_phase_explains_it_is_reading_the_video(self):
+        self.assertEqual(recognize_tui.phase_label("probe"), "Leyendo duracion del video...")
+
+
+class ScanGapsTest(unittest.TestCase):
+    def test_a_scan_covers_the_whole_video_as_one_gap(self):
+        self.assertEqual(tracklist.scan_gaps(3552), [(0, 3552)])
+
+    def test_a_video_too_short_to_sample_yields_nothing(self):
+        self.assertEqual(tracklist.scan_gaps(20), [])
+
+    def test_an_unknown_duration_yields_nothing(self):
+        self.assertEqual(tracklist.scan_gaps(None), [])
 
 
 class SingleDownloadTest(IsolatedCache, unittest.TestCase):
