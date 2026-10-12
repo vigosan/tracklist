@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import recognize_tui
 import recognize_ui
@@ -1114,6 +1115,30 @@ class LocalFileTest(unittest.TestCase):
 
     def test_a_video_url_keeps_the_youtube_path(self):
         self.assertIsNone(tracklist.local_file("https://www.youtube.com/watch?v=vid12345678"))
+
+
+class ExpiredTokenTest(unittest.TestCase):
+    def test_a_revoked_token_asks_to_log_in_again_instead_of_crashing(self):
+        from google.auth.exceptions import RefreshError
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            secret, token = root / "client_secret.json", root / "youtube_token.json"
+            secret.write_text("{}")
+            token.write_text("{}")
+            stale = mock.Mock(expired=True, refresh_token="r")
+            stale.refresh.side_effect = RefreshError("invalid_grant")
+            fresh = mock.Mock(valid=True)
+            fresh.to_json.return_value = "{}"
+            flow = mock.Mock()
+            flow.run_local_server.return_value = fresh
+            with mock.patch.object(upload, "CLIENT_SECRET", secret), \
+                    mock.patch.object(upload, "TOKEN_FILE", token), \
+                    mock.patch("google.oauth2.credentials.Credentials.from_authorized_user_file", return_value=stale), \
+                    mock.patch("google_auth_oauthlib.flow.InstalledAppFlow.from_client_secrets_file", return_value=flow), \
+                    mock.patch("googleapiclient.discovery.build", return_value="client"):
+                self.assertEqual(upload.youtube_client(), "client")
+            flow.run_local_server.assert_called_once()
 
 
 if __name__ == "__main__":

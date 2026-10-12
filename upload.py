@@ -124,6 +124,7 @@ def remember_upload(path, video_id):
 
 def youtube_client():
     try:
+        from google.auth.exceptions import RefreshError
         from google.auth.transport.requests import Request
         from google.oauth2.credentials import Credentials
         from google_auth_oauthlib.flow import InstalledAppFlow
@@ -146,7 +147,10 @@ def youtube_client():
     if TOKEN_FILE.exists():
         credentials = Credentials.from_authorized_user_file(str(TOKEN_FILE), SCOPES)
     if credentials and credentials.expired and credentials.refresh_token:
-        credentials.refresh(Request())
+        try:
+            credentials.refresh(Request())
+        except RefreshError:
+            credentials = None
     if not credentials or not credentials.valid:
         flow = InstalledAppFlow.from_client_secrets_file(str(CLIENT_SECRET), SCOPES)
         credentials = flow.run_local_server(port=0)
