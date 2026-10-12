@@ -911,6 +911,11 @@ class ConvertToVideoTest(LocalAudio, unittest.TestCase):
         self.assertEqual(ffprobe_streams(target), ["aac,audio", "h264,video"])
 
 
+class LocalDurationTest(LocalAudio, unittest.TestCase):
+    def test_the_length_comes_from_the_file_since_a_private_video_may_be_unreadable(self):
+        self.assertEqual(upload.local_duration(self.source), 2)
+
+
 class PlaceAudioTest(LocalAudio, unittest.TestCase):
     def test_shazam_finds_the_local_audio_where_a_download_would_be(self):
         upload.place_audio(self.source, "vid12345678")

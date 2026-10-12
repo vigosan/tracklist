@@ -629,6 +629,7 @@ def main():
         clear_cache(video_id)
     if local:
         upload.place_audio(local, video_id)
+        args.duration = args.duration or upload.local_duration(local)
 
     if not args.from_json and args.recognize and recognition_available():
         import recognize_ui

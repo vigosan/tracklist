@@ -35,6 +35,15 @@ def convert_to_video(source, target):
     )
 
 
+def local_duration(source):
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "csv=p=0", str(source)],
+        check=True, capture_output=True, text=True,
+    )
+    return int(float(result.stdout))
+
+
 def place_audio(source, video_id):
     target = tracklist.audio_path(video_id)
     if target.exists():
