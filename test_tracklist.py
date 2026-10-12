@@ -1008,6 +1008,10 @@ class WaitForProcessingTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.wait(["processing", "failed"])
 
+    def test_a_terminated_upload_stops_instead_of_waiting_forever(self):
+        with self.assertRaises(SystemExit):
+            self.wait(["processing", "terminated"])
+
 
 class IsolatedUploads:
     def setUp(self):

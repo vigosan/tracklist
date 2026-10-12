@@ -66,8 +66,8 @@ def wait_for_processing(client, video_id, report, sleep=time.sleep):
         status = processing_status(client, video_id)
         if status == "succeeded":
             return
-        if status == "failed":
-            sys.exit(f"YouTube no pudo procesar el video {video_id}")
+        if status != "processing":
+            sys.exit(f"YouTube no pudo procesar el video {video_id} ({status})")
         report(f"Procesando en YouTube ({status})")
         sleep(PROCESSING_POLL)
 
