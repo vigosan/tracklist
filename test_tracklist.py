@@ -1009,5 +1009,89 @@ class WaitForProcessingTest(unittest.TestCase):
             self.wait(["processing", "failed"])
 
 
+class IsolatedUploads:
+    def setUp(self):
+        super().setUp()
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        original = upload.UPLOADS_FILE
+        upload.UPLOADS_FILE = self.root / "config" / "uploads.json"
+
+        def restore():
+            upload.UPLOADS_FILE = original
+
+        self.addCleanup(restore)
+
+
+class UploadRegistryTest(IsolatedUploads, unittest.TestCase):
+    def test_a_file_never_uploaded_is_unknown(self):
+        source = self.root / "set.m4a"
+        source.write_bytes(b"audio")
+        self.assertIsNone(upload.known_upload(source))
+
+    def test_a_renamed_file_is_still_recognised_by_its_content(self):
+        source = self.root / "set.m4a"
+        source.write_bytes(b"audio")
+        upload.remember_upload(source, "vid12345678")
+        renamed = self.root / "otro nombre.m4a"
+        source.rename(renamed)
+        self.assertEqual(upload.known_upload(renamed), "vid12345678")
+
+    def test_a_different_recording_with_the_same_name_is_not_confused(self):
+        source = self.root / "set.m4a"
+        source.write_bytes(b"audio")
+        upload.remember_upload(source, "vid12345678")
+        source.write_bytes(b"otra grabacion")
+        self.assertIsNone(upload.known_upload(source))
+
+
+class PrepareTest(IsolatedUploads, unittest.TestCase):
+    def setUp(self):
+        super().setUp()
+        self.source = self.root / "Spook Multiespacio 3.m4a"
+        self.source.write_bytes(b"audio")
+        self.uploads = []
+        self.waits = []
+        self.upload_error = None
+        names = ("youtube_client", "convert_to_video", "upload_video",
+                 "wait_for_processing", "wait_for_claims")
+        original = {name: getattr(upload, name) for name in names}
+
+        def fake_upload(client, path, title):
+            if self.upload_error:
+                raise self.upload_error
+            self.uploads.append(title)
+            return "vid12345678"
+
+        upload.youtube_client = lambda: "client"
+        upload.convert_to_video = lambda source, target: target.write_bytes(b"mp4")
+        upload.upload_video = fake_upload
+        upload.wait_for_processing = lambda client, video_id, report: self.waits.append(("processing", video_id))
+        upload.wait_for_claims = lambda video_id, report: self.waits.append(("claims", video_id))
+
+        def restore():
+            for name, value in original.items():
+                setattr(upload, name, value)
+
+        self.addCleanup(restore)
+
+    def test_the_video_is_titled_after_the_file(self):
+        self.assertEqual(upload.prepare(self.source, lambda message: None), "vid12345678")
+        self.assertEqual(self.uploads, ["Spook Multiespacio 3"])
+
+    def test_relaunching_after_an_interrupted_wait_does_not_upload_twice(self):
+        upload.prepare(self.source, lambda message: None)
+        upload.prepare(self.source, lambda message: None)
+        self.assertEqual(len(self.uploads), 1)
+        self.assertEqual(self.waits[-2:], [("processing", "vid12345678"), ("claims", "vid12345678")])
+
+    def test_a_failed_upload_is_retried_on_the_next_run(self):
+        self.upload_error = SystemExit("cuota")
+        with self.assertRaises(SystemExit):
+            upload.prepare(self.source, lambda message: None)
+        self.assertIsNone(upload.known_upload(self.source))
+
+
 if __name__ == "__main__":
     unittest.main()

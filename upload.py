@@ -1,9 +1,22 @@
+import hashlib
+import json
 import subprocess
 import sys
+import tempfile
 import time
+from pathlib import Path
 
 import tracklist
 
+CONFIG_DIR = Path.home() / ".config" / "tracklist"
+UPLOADS_FILE = CONFIG_DIR / "uploads.json"
+CLIENT_SECRET = CONFIG_DIR / "client_secret.json"
+TOKEN_FILE = CONFIG_DIR / "youtube_token.json"
+SCOPES = [
+    "https://www.googleapis.com/auth/youtube.upload",
+    "https://www.googleapis.com/auth/youtube.readonly",
+]
+QUOTA_REASONS = ("quotaExceeded", "uploadLimitExceeded")
 PROCESSING_POLL = 30
 CLAIMS_POLL = 120
 CLAIMS_STABLE_POLLS = 3
@@ -76,3 +89,95 @@ def wait_for_claims(video_id, report, sleep=time.sleep, clock=time.monotonic):
         if claims_settled(counts, elapsed):
             return
         sleep(CLAIMS_POLL)
+
+
+def file_hash(path):
+    with path.open("rb") as handle:
+        return hashlib.file_digest(handle, "sha256").hexdigest()
+
+
+def load_uploads():
+    if not UPLOADS_FILE.exists():
+        return {}
+    return json.loads(UPLOADS_FILE.read_text())
+
+
+def known_upload(path):
+    return load_uploads().get(file_hash(path))
+
+
+def remember_upload(path, video_id):
+    uploads = load_uploads()
+    uploads[file_hash(path)] = video_id
+    UPLOADS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    UPLOADS_FILE.write_text(json.dumps(uploads))
+
+
+def youtube_client():
+    try:
+        from google.auth.transport.requests import Request
+        from google.oauth2.credentials import Credentials
+        from google_auth_oauthlib.flow import InstalledAppFlow
+        from googleapiclient.discovery import build
+    except ImportError:
+        sys.exit(
+            "Para subir audio ejecuta con el python del venv.\n"
+            "Dependencias (una vez): .venv/bin/python -m pip install google-api-python-client google-auth-oauthlib"
+        )
+    if not CLIENT_SECRET.exists():
+        sys.exit(
+            "Falta la credencial de YouTube. Una sola vez:\n"
+            "  1. console.cloud.google.com > proyecto nuevo\n"
+            "  2. APIs y servicios > activa 'YouTube Data API v3'\n"
+            "  3. Pantalla de consentimiento OAuth > externo, anadete como usuario de prueba\n"
+            "  4. Credenciales > ID de cliente OAuth > 'App de escritorio' > descargar JSON\n"
+            f"  5. Guardalo como {CLIENT_SECRET}"
+        )
+    credentials = None
+    if TOKEN_FILE.exists():
+        credentials = Credentials.from_authorized_user_file(str(TOKEN_FILE), SCOPES)
+    if credentials and credentials.expired and credentials.refresh_token:
+        credentials.refresh(Request())
+    if not credentials or not credentials.valid:
+        flow = InstalledAppFlow.from_client_secrets_file(str(CLIENT_SECRET), SCOPES)
+        credentials = flow.run_local_server(port=0)
+    TOKEN_FILE.write_text(credentials.to_json())
+    TOKEN_FILE.chmod(0o600)
+    return build("youtube", "v3", credentials=credentials)
+
+
+def upload_video(client, path, title):
+    from googleapiclient.errors import HttpError
+    from googleapiclient.http import MediaFileUpload
+
+    body = {"snippet": {"title": title}, "status": {"privacyStatus": "private"}}
+    media = MediaFileUpload(str(path), mimetype="video/mp4", chunksize=-1, resumable=True)
+    request = client.videos().insert(part="snippet,status", body=body, media_body=media)
+    try:
+        response = None
+        while response is None:
+            _, response = request.next_chunk()
+    except HttpError as error:
+        if any(reason in error.content.decode() for reason in QUOTA_REASONS):
+            sys.exit("Cuota de subidas de YouTube agotada: prueba manana")
+        raise
+    return response["id"]
+
+
+def prepare(path, report):
+    client = youtube_client()
+    video_id = known_upload(path)
+    if video_id:
+        report(f"Ya subido como https://youtu.be/{video_id}")
+    else:
+        with tempfile.TemporaryDirectory() as tmp:
+            video = Path(tmp) / f"{path.stem}.mp4"
+            report("Convirtiendo a video")
+            convert_to_video(path, video)
+            report("Subiendo a YouTube")
+            video_id = upload_video(client, video, path.stem)
+        remember_upload(path, video_id)
+        report(f"Subido como https://youtu.be/{video_id}")
+    wait_for_processing(client, video_id, report)
+    wait_for_claims(video_id, report)
+    return video_id
