@@ -1141,5 +1141,36 @@ class ExpiredTokenTest(unittest.TestCase):
             flow.run_local_server.assert_called_once()
 
 
+class RefreshKeyTest(unittest.TestCase):
+    def test_r_picks_up_claims_content_id_added_after_the_first_look(self):
+        from textual.app import App
+
+        claim = {"receivedClaims": [{
+            "matchDetails": {"longestMatchStartTimeSeconds": 0, "longestMatchDurationSeconds": 300},
+            "asset": {"metadata": {"soundRecording": {"title": "Kisses of Fire", "artists": ["La Luna"]}}},
+        }]}
+        looks = iter([[], tracklist.extract(claim)])
+
+        async def no_recognition(video_id, gaps, progress, resume=None):
+            return []
+
+        def drive(app, *args, **kwargs):
+            async def scenario():
+                async with app.run_test() as pilot:
+                    await app.workers.wait_for_complete()
+                    await pilot.press("r")
+                    await pilot.pause()
+                    await app.workers.wait_for_complete()
+                    await pilot.press("q")
+            asyncio.run(scenario())
+
+        with mock.patch.object(tracklist, "try_claims", lambda video_id: ({}, next(looks))), \
+                mock.patch.object(tracklist, "recognize_gaps_async", no_recognition), \
+                mock.patch.object(App, "run", drive):
+            _, entries, gaps, _, _, _ = recognize_tui.run_app("dnS4s0gar-4", 600, False)
+        self.assertEqual([entry["title"] for entry in entries], ["Kisses of Fire"])
+        self.assertEqual(gaps, [(300, 600)])
+
+
 if __name__ == "__main__":
     unittest.main()

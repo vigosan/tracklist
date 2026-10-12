@@ -84,6 +84,7 @@ def run_app(video_id, duration, label):
         """
         BINDINGS = [
             ("p", "pause", "Pausa"),
+            ("r", "refresh", "Refrescar"),
             ("n", "new", "Nuevo"),
             ("x", "clear", "Vaciar"),
             ("c", "copy", "Copiar"),
@@ -307,6 +308,11 @@ def run_app(video_id, duration, label):
                 self.state["paused"] = True
                 self.resume.clear()
                 log.write("[*] pausa")
+
+        def action_refresh(self):
+            if self.pending is not None:
+                return
+            self.restart()
 
         def action_new(self):
             if self.pending is not None:
