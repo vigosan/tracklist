@@ -929,5 +929,85 @@ class PlaceAudioTest(LocalAudio, unittest.TestCase):
         self.assertTrue(tracklist.audio_path("vid12345678").exists())
 
 
+class ClaimsSettledTest(unittest.TestCase):
+    def test_the_same_count_three_times_means_content_id_is_done(self):
+        self.assertTrue(upload.claims_settled([2, 5, 5, 5], 480))
+
+    def test_a_count_still_growing_keeps_waiting(self):
+        self.assertFalse(upload.claims_settled([5, 5, 6], 360))
+
+    def test_no_claims_yet_is_not_mistaken_for_done(self):
+        self.assertFalse(upload.claims_settled([0, 0, 0], 360))
+
+    def test_waiting_gives_up_after_an_hour(self):
+        self.assertTrue(upload.claims_settled([0, 0, 0], upload.CLAIMS_TIMEOUT))
+
+
+class FakeTime:
+    def __init__(self):
+        self.now = 0
+        self.sleeps = []
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+    def clock(self):
+        return self.now
+
+
+class WaitForClaimsTest(unittest.TestCase):
+    def wait(self, counts, session=True):
+        polls = iter(counts)
+        original = tracklist.try_claims
+        tracklist.try_claims = lambda video_id: (
+            ({} if session else None),
+            [{"start": 0}] * next(polls),
+        )
+        time = FakeTime()
+        messages = []
+        try:
+            upload.wait_for_claims("vid12345678", messages.append, time.sleep, time.clock)
+        finally:
+            tracklist.try_claims = original
+        return time, messages
+
+    def test_stops_polling_once_the_claims_stop_changing(self):
+        time, _ = self.wait([0, 3, 7, 7, 7, 9])
+        self.assertEqual(time.sleeps, [upload.CLAIMS_POLL] * 4)
+
+    def test_without_a_studio_session_it_does_not_wait_blindly(self):
+        time, messages = self.wait([0], session=False)
+        self.assertEqual(time.sleeps, [])
+        self.assertIn("sesion", messages[-1])
+
+    def test_giving_up_tells_the_user_to_retry_later(self):
+        polls = upload.CLAIMS_TIMEOUT // upload.CLAIMS_POLL + 1
+        time, messages = self.wait([0] * polls)
+        self.assertEqual(time.now, upload.CLAIMS_TIMEOUT)
+        self.assertIn("mas tarde", messages[-1])
+
+
+class WaitForProcessingTest(unittest.TestCase):
+    def wait(self, statuses):
+        polls = iter(statuses)
+        original = upload.processing_status
+        upload.processing_status = lambda client, video_id: next(polls)
+        time = FakeTime()
+        try:
+            upload.wait_for_processing("client", "vid12345678", lambda message: None, time.sleep)
+        finally:
+            upload.processing_status = original
+        return time
+
+    def test_claims_are_only_read_after_youtube_finishes_processing(self):
+        time = self.wait(["processing", "processing", "succeeded"])
+        self.assertEqual(time.sleeps, [upload.PROCESSING_POLL] * 2)
+
+    def test_a_failed_upload_stops_instead_of_waiting_forever(self):
+        with self.assertRaises(SystemExit):
+            self.wait(["processing", "failed"])
+
+
 if __name__ == "__main__":
     unittest.main()

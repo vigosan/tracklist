@@ -1,6 +1,13 @@
 import subprocess
+import sys
+import time
 
 import tracklist
+
+PROCESSING_POLL = 30
+CLAIMS_POLL = 120
+CLAIMS_STABLE_POLLS = 3
+CLAIMS_TIMEOUT = 3600
 
 
 def convert_to_video(source, target):
@@ -25,3 +32,47 @@ def place_audio(source, video_id):
          "-codec:a", "libmp3lame", "-q:a", "2", str(target)],
         check=True, capture_output=True,
     )
+
+
+def claims_settled(counts, elapsed):
+    if elapsed >= CLAIMS_TIMEOUT:
+        return True
+    recent = counts[-CLAIMS_STABLE_POLLS:]
+    return len(recent) == CLAIMS_STABLE_POLLS and recent[0] > 0 and len(set(recent)) == 1
+
+
+def processing_status(client, video_id):
+    items = client.videos().list(part="processingDetails", id=video_id).execute().get("items")
+    if not items:
+        return "processing"
+    return items[0]["processingDetails"]["processingStatus"]
+
+
+def wait_for_processing(client, video_id, report, sleep=time.sleep):
+    while True:
+        status = processing_status(client, video_id)
+        if status == "succeeded":
+            return
+        if status == "failed":
+            sys.exit(f"YouTube no pudo procesar el video {video_id}")
+        report(f"Procesando en YouTube ({status})")
+        sleep(PROCESSING_POLL)
+
+
+def wait_for_claims(video_id, report, sleep=time.sleep, clock=time.monotonic):
+    began = clock()
+    counts = []
+    while True:
+        session, entries = tracklist.try_claims(video_id)
+        if session is None:
+            report("Sin sesion de Studio: no se pueden leer las reclamaciones, sigo sin esperar")
+            return
+        counts.append(len(entries))
+        elapsed = clock() - began
+        report(f"Reclamaciones: {len(entries)} ({tracklist.hhmmss(int(elapsed))})")
+        if elapsed >= CLAIMS_TIMEOUT:
+            report(f"Content ID sigue trabajando: vuelve a lanzar 'tracklist {video_id}' mas tarde")
+            return
+        if claims_settled(counts, elapsed):
+            return
+        sleep(CLAIMS_POLL)
