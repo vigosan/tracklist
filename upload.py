@@ -12,10 +12,7 @@ CONFIG_DIR = Path.home() / ".config" / "tracklist"
 UPLOADS_FILE = CONFIG_DIR / "uploads.json"
 CLIENT_SECRET = CONFIG_DIR / "client_secret.json"
 TOKEN_FILE = CONFIG_DIR / "youtube_token.json"
-SCOPES = [
-    "https://www.googleapis.com/auth/youtube.upload",
-    "https://www.googleapis.com/auth/youtube.readonly",
-]
+SCOPES = ["https://www.googleapis.com/auth/youtube"]
 QUOTA_REASONS = ("quotaExceeded", "uploadLimitExceeded")
 PROCESSING_POLL = 30
 CLAIMS_POLL = 120
@@ -122,6 +119,11 @@ def remember_upload(path, video_id):
     UPLOADS_FILE.write_text(json.dumps(uploads))
 
 
+def forget_upload(video_id):
+    uploads = {digest: known for digest, known in load_uploads().items() if known != video_id}
+    UPLOADS_FILE.write_text(json.dumps(uploads))
+
+
 def youtube_client():
     try:
         from google.auth.exceptions import RefreshError
@@ -145,7 +147,9 @@ def youtube_client():
         )
     credentials = None
     if TOKEN_FILE.exists():
-        credentials = Credentials.from_authorized_user_file(str(TOKEN_FILE), SCOPES)
+        credentials = Credentials.from_authorized_user_file(str(TOKEN_FILE))
+        if not credentials.has_scopes(SCOPES):
+            credentials = None
     if credentials and credentials.expired and credentials.refresh_token:
         try:
             credentials.refresh(Request())
@@ -194,3 +198,25 @@ def prepare(path, report):
     wait_for_processing(client, video_id, report)
     wait_for_claims(video_id, report)
     return video_id
+
+
+def delete_video(client, video_id):
+    client.videos().delete(id=video_id).execute()
+
+
+def offer_delete(video_id):
+    if not (sys.stdin.isatty() and sys.stderr.isatty()):
+        return
+    if video_id not in load_uploads().values():
+        return
+    print(f"¿Borrar el video de YouTube {video_id}? [s/N] ", end="", file=sys.stderr, flush=True)
+    try:
+        answer = input().strip().lower()
+    except EOFError:
+        print(file=sys.stderr)
+        return
+    if answer != "s":
+        return
+    delete_video(youtube_client(), video_id)
+    forget_upload(video_id)
+    print("Video borrado.", file=sys.stderr)

@@ -1172,5 +1172,71 @@ class RefreshKeyTest(unittest.TestCase):
         self.assertEqual(gaps, [(300, 600)])
 
 
+class OfferDeleteTest(IsolatedUploads, unittest.TestCase):
+    def setUp(self):
+        super().setUp()
+        source = self.root / "Spook Multiespacio 8.m4a"
+        source.write_bytes(b"audio")
+        self.source = source
+        upload.remember_upload(source, "dnS4s0gar-4")
+        self.deleted = []
+        patches = [
+            mock.patch.object(upload, "youtube_client", lambda: "client"),
+            mock.patch.object(upload, "delete_video", lambda client, video_id: self.deleted.append(video_id)),
+        ]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def offer(self, video_id, answer="", tty=True):
+        terminal = mock.Mock(isatty=lambda: tty)
+        with mock.patch("sys.stdin", terminal), mock.patch("sys.stderr", terminal), \
+                mock.patch("builtins.input", return_value=answer) as asked:
+            upload.offer_delete(video_id)
+        return asked
+
+    def test_a_video_tracklist_did_not_upload_is_never_offered_for_deletion(self):
+        asked = self.offer("otro1234567", answer="s")
+        asked.assert_not_called()
+        self.assertEqual(self.deleted, [])
+
+    def test_just_pressing_enter_keeps_the_video_because_deleting_is_permanent(self):
+        self.offer("dnS4s0gar-4", answer="")
+        self.assertEqual(self.deleted, [])
+        self.assertEqual(upload.known_upload(self.source), "dnS4s0gar-4")
+
+    def test_confirming_deletes_the_video_and_forgets_the_upload(self):
+        self.offer("dnS4s0gar-4", answer="s")
+        self.assertEqual(self.deleted, ["dnS4s0gar-4"])
+        self.assertIsNone(upload.known_upload(self.source))
+
+    def test_without_a_terminal_it_never_asks(self):
+        asked = self.offer("dnS4s0gar-4", answer="s", tty=False)
+        asked.assert_not_called()
+        self.assertEqual(self.deleted, [])
+
+
+class DeleteScopeTest(unittest.TestCase):
+    def test_a_token_granted_before_deletion_existed_asks_to_log_in_again(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            secret, token = root / "client_secret.json", root / "youtube_token.json"
+            secret.write_text("{}")
+            token.write_text("{}")
+            narrow = mock.Mock(valid=True, expired=False)
+            narrow.has_scopes.return_value = False
+            fresh = mock.Mock(valid=True)
+            fresh.to_json.return_value = "{}"
+            flow = mock.Mock()
+            flow.run_local_server.return_value = fresh
+            with mock.patch.object(upload, "CLIENT_SECRET", secret), \
+                    mock.patch.object(upload, "TOKEN_FILE", token), \
+                    mock.patch("google.oauth2.credentials.Credentials.from_authorized_user_file", return_value=narrow), \
+                    mock.patch("google_auth_oauthlib.flow.InstalledAppFlow.from_client_secrets_file", return_value=flow), \
+                    mock.patch("googleapiclient.discovery.build", return_value="client"):
+                upload.youtube_client()
+            flow.run_local_server.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

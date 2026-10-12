@@ -618,10 +618,10 @@ def main():
     if not args.video:
         parser.error("indica la URL o el ID del video")
 
+    import upload
+
     local = local_file(args.video)
     if local:
-        import upload
-
         video_id = upload.prepare(local, lambda message: print(message, file=sys.stderr))
     else:
         video_id = parse_video_id(args.video)
@@ -645,6 +645,7 @@ def main():
             entries = sorted(entries + drop_claimed(entries, found), key=lambda entry: entry["start"])
             gaps = find_gaps(entries, duration)
             print(render(entries, gaps, video_id, args.label, title))
+            upload.offer_delete(video_id)
             return
 
     title = None
@@ -677,8 +678,10 @@ def main():
         text = render(entries, gaps, video_id, args.label, title)
         print(text)
         recognize_ui.offer_clipboard(text)
+        upload.offer_delete(video_id)
         return
     print(render(entries, gaps, video_id, args.label, title))
+    upload.offer_delete(video_id)
 
 
 if __name__ == "__main__":
