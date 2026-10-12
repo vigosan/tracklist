@@ -3,6 +3,7 @@ import contextlib
 import hashlib
 import io
 import importlib.util
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +11,7 @@ from pathlib import Path
 import recognize_tui
 import recognize_ui
 import tracklist
+import upload
 
 
 def sha(value, timestamp):
@@ -877,6 +879,54 @@ class ResumeTest(IsolatedCache, unittest.TestCase):
         self.run_recognition([(0, 150)])
         self.assertEqual(self.downloads, ["vid12345678"])
         self.assertEqual(self.cuts, [])
+
+
+def ffprobe_streams(path):
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,codec_name",
+         "-of", "csv=p=0", str(path)],
+        capture_output=True, text=True, check=True,
+    )
+    return sorted(result.stdout.split())
+
+
+class LocalAudio(IsolatedCache):
+    def setUp(self):
+        super().setUp()
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.source = self.root / "Spook Multiespacio 3.m4a"
+        subprocess.run(
+            ["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
+             "-c:a", "aac", str(self.source)],
+            check=True, capture_output=True,
+        )
+
+
+class ConvertToVideoTest(LocalAudio, unittest.TestCase):
+    def test_youtube_gets_a_video_whose_audio_is_untouched(self):
+        target = self.root / "out.mp4"
+        upload.convert_to_video(self.source, target)
+        self.assertEqual(ffprobe_streams(target), ["aac,audio", "h264,video"])
+
+
+class PlaceAudioTest(LocalAudio, unittest.TestCase):
+    def test_shazam_finds_the_local_audio_where_a_download_would_be(self):
+        upload.place_audio(self.source, "vid12345678")
+        self.assertEqual(ffprobe_streams(tracklist.audio_path("vid12345678")), ["mp3,audio"])
+
+    def test_existing_audio_is_reused_instead_of_converted_again(self):
+        tracklist.AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+        tracklist.audio_path("vid12345678").write_bytes(b"ya estaba")
+        upload.place_audio(self.source, "vid12345678")
+        self.assertEqual(tracklist.audio_path("vid12345678").read_bytes(), b"ya estaba")
+
+    def test_audio_cleared_by_fresh_is_rebuilt_from_the_local_file(self):
+        upload.place_audio(self.source, "vid12345678")
+        tracklist.clear_cache("vid12345678")
+        upload.place_audio(self.source, "vid12345678")
+        self.assertTrue(tracklist.audio_path("vid12345678").exists())
 
 
 if __name__ == "__main__":
