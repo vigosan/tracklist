@@ -580,9 +580,14 @@ def parse_video_id(text):
     return match.group(1) if match else text
 
 
+def local_file(text):
+    path = Path(text).expanduser()
+    return path if path.is_file() else None
+
+
 def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("video", nargs="?", help="URL o ID del video")
+    parser.add_argument("video", nargs="?", help="URL o ID del video, o fichero de audio")
     parser.add_argument("--save-session", metavar="FICHERO", help="guarda un cURL copiado de Studio")
     parser.add_argument("--from-json", metavar="FICHERO", help="usa una respuesta ya guardada")
     parser.add_argument("--duration", type=int, help="duracion total en segundos, para el hueco final")
@@ -605,7 +610,7 @@ def main():
         save_session(args.save_session)
         return
     if not args.video and sys.stdin.isatty() and sys.stderr.isatty():
-        print("URL o ID del video: ", end="", file=sys.stderr, flush=True)
+        print("URL o ID del video, o fichero de audio: ", end="", file=sys.stderr, flush=True)
         try:
             args.video = input().strip()
         except EOFError:
@@ -613,9 +618,17 @@ def main():
     if not args.video:
         parser.error("indica la URL o el ID del video")
 
-    video_id = parse_video_id(args.video)
+    local = local_file(args.video)
+    if local:
+        import upload
+
+        video_id = upload.prepare(local, lambda message: print(message, file=sys.stderr))
+    else:
+        video_id = parse_video_id(args.video)
     if args.fresh:
         clear_cache(video_id)
+    if local:
+        upload.place_audio(local, video_id)
 
     if not args.from_json and args.recognize and recognition_available():
         import recognize_ui

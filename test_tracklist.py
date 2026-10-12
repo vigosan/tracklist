@@ -1093,5 +1093,19 @@ class PrepareTest(IsolatedUploads, unittest.TestCase):
         self.assertIsNone(upload.known_upload(self.source))
 
 
+class LocalFileTest(unittest.TestCase):
+    def test_an_existing_recording_takes_the_upload_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "Spook Multiespacio 3.m4a"
+            source.write_bytes(b"audio")
+            self.assertEqual(tracklist.local_file(str(source)), source)
+
+    def test_a_video_id_keeps_the_youtube_path(self):
+        self.assertIsNone(tracklist.local_file("vid12345678"))
+
+    def test_a_video_url_keeps_the_youtube_path(self):
+        self.assertIsNone(tracklist.local_file("https://www.youtube.com/watch?v=vid12345678"))
+
+
 if __name__ == "__main__":
     unittest.main()
