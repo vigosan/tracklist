@@ -479,7 +479,7 @@ def recognize_gaps_async(video_id, gaps, progress, resume=None):
                             if limiter.workers != before:
                                 progress(("workers", limiter.workers))
                         except Exception:
-                            return {}
+                            return None
                         else:
                             if failures:
                                 progress(("resolved", offset))
@@ -487,7 +487,7 @@ def recognize_gaps_async(video_id, gaps, progress, resume=None):
                         finally:
                             gate.release()
                         await asyncio.sleep(backoff_delay(failures))
-                    return {}
+                    return None
 
                 async def handle(offset):
                     if offset in cached_samples:
@@ -498,7 +498,7 @@ def recognize_gaps_async(video_id, gaps, progress, resume=None):
                         await resume.wait()
                     sample = await asyncio.to_thread(cut_sample, source, offset, directory)
                     result = await recognize_sample(sample, offset)
-                    track = result.get("track")
+                    track = result.get("track") if result is not None else None
                     if track:
                         before = limiter.workers
                         limiter.reward()
@@ -508,7 +508,8 @@ def recognize_gaps_async(video_id, gaps, progress, resume=None):
                     if track:
                         match = {"artist": track.get("subtitle", "?"), "title": track.get("title", "?")}
                     bisect.insort(samples, (offset, match), key=lambda item: item[0])
-                    save_sample(video_id, offset, match)
+                    if result is not None:
+                        save_sample(video_id, offset, match)
                     progress(("sample", offset, match))
                     await asyncio.sleep(SAMPLE_PACING)
 

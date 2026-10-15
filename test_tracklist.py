@@ -859,6 +859,25 @@ class ResumeTest(IsolatedCache, unittest.TestCase):
         self.assertEqual(peak["value"], tracklist.MAX_WORKERS)
         self.assertLessEqual(idle["value"], 3)
 
+    def test_samples_shazam_failed_on_are_retried_next_run_instead_of_cached_as_unknown(self):
+        import shazamio
+        from shazamio.exceptions import FailedDecodeJson
+
+        class RefusingShazam:
+            async def recognize_song(self, path):
+                raise FailedDecodeJson("rate limited")
+
+        original = (tracklist.download_audio, tracklist.cut_sample, shazamio.Shazam)
+        tracklist.download_audio = lambda video_id, directory: Path("/tmp/a.mp3")
+        tracklist.cut_sample = lambda source, offset, directory: Path("/tmp/s.wav")
+        shazamio.Shazam = RefusingShazam
+        try:
+            with mock.patch.object(tracklist, "backoff_delay", lambda failures: 0):
+                tracklist.recognize_gaps("vid12345678", [(0, 150)], lambda event: None)
+        finally:
+            tracklist.download_audio, tracklist.cut_sample, shazamio.Shazam = original
+        self.assertEqual(tracklist.load_cache("vid12345678")["samples"], {})
+
     def test_cached_samples_still_reach_the_progress_callback(self):
         self.run_recognition([(0, 150)])
         events = self.run_recognition([(0, 150)])
