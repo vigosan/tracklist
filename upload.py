@@ -84,8 +84,10 @@ def wait_for_claims(video_id, report, sleep=time.sleep, clock=time.monotonic):
     while True:
         session, entries = tracklist.try_claims(video_id)
         if session is None:
-            report("Sin sesion de Studio: no se pueden leer las reclamaciones, sigo sin esperar")
-            return
+            sys.exit(
+                "Sin sesion de Studio: entra en studio.youtube.com con Brave y vuelve a lanzar "
+                f"el mismo comando (el video ya esta subido: https://youtu.be/{video_id})"
+            )
         counts.append(len(entries))
         elapsed = clock() - began
         report(f"Reclamaciones: {len(entries)} ({tracklist.hhmmss(int(elapsed))})")

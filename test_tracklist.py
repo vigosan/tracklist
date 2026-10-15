@@ -1001,10 +1001,10 @@ class WaitForClaimsTest(unittest.TestCase):
         time, _ = self.wait([0, 3, 7, 7, 7, 9])
         self.assertEqual(time.sleeps, [upload.CLAIMS_POLL] * 4)
 
-    def test_without_a_studio_session_it_does_not_wait_blindly(self):
-        time, messages = self.wait([0], session=False)
-        self.assertEqual(time.sleeps, [])
-        self.assertIn("sesion", messages[-1])
+    def test_without_a_studio_session_it_stops_so_claims_are_not_skipped(self):
+        with self.assertRaises(SystemExit) as stop:
+            self.wait([0], session=False)
+        self.assertIn("studio.youtube.com", str(stop.exception.code))
 
     def test_giving_up_tells_the_user_to_retry_later(self):
         polls = upload.CLAIMS_TIMEOUT // upload.CLAIMS_POLL + 1
