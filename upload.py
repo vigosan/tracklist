@@ -336,7 +336,7 @@ def adopt(video_id, report):
         uploaded = prepare(audio, report, title, lambda copy: remember(remote_key(video_id), copy))
     except QuotaExceeded:
         report(t("quota_shazam"))
-        return video_id, None, title, False
+        return video_id, audio, title, False
     return uploaded, audio, title, True
 
 

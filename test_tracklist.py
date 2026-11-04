@@ -1650,8 +1650,13 @@ class AdoptTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
 
     def test_an_exhausted_quota_falls_back_to_shazam_instead_of_stopping(self):
         self.quota_error = True
-        self.assertEqual(self.adopt(), ("orig1234567", None, "Set ajeno", False))
+        video_id, _, title, own = self.adopt()
+        self.assertEqual((video_id, title, own), ("orig1234567", "Set ajeno", False))
         self.assertIn("YouTube upload quota used up: continuing with Shazam only", self.messages)
+
+    def test_an_exhausted_quota_still_hands_over_the_download_so_shazam_does_not_fetch_it_again(self):
+        self.quota_error = True
+        self.assertEqual(self.adopt()[1], upload.downloads_dir() / "orig1234567.webm")
 
     def test_deleting_the_uploaded_copy_also_deletes_the_download(self):
         video_id, audio, title, own = self.adopt()
