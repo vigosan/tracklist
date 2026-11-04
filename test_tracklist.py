@@ -2034,7 +2034,18 @@ class SetupCredentialsTest(unittest.TestCase):
         fresh = self.write_secret(self.root / "fresh.json")
         self.run_wizard([""] * 7 + [str(fresh)])
         self.assertTrue(upload.CLIENT_SECRET.exists())
-        self.assertEqual(len([m for m in self.reported if m.startswith("That file")]), 1)
+
+    def test_enter_with_nothing_new_in_downloads_asks_for_the_file_instead_of_blaming_one(self):
+        fresh = self.write_secret(self.root / "fresh.json")
+        self.run_wizard([""] * 7 + [str(fresh)])
+        self.assertIn("No new client_secret*.json found in ~/Downloads: download it or paste the JSON's path.", self.reported)
+        self.assertFalse(any(m.startswith("That file") for m in self.reported))
+
+    def test_a_spanish_system_asks_for_the_missing_file_in_spanish(self):
+        fresh = self.write_secret(self.root / "fresh.json")
+        with mock.patch.object(messages, "LANGUAGE", "es"):
+            self.run_wizard([""] * 7 + [str(fresh)])
+        self.assertIn("No encuentro un client_secret*.json nuevo en ~/Downloads: descargalo o pega la ruta del JSON.", self.reported)
 
     def test_a_json_that_is_not_a_desktop_client_is_rejected(self):
         web = self.write_secret(self.root / "web.json", {"web": {"client_id": "x"}})

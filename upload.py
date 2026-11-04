@@ -224,7 +224,10 @@ def setup_credentials(open_url=webbrowser.open, ask=input, report=print_stderr,
             found = Path(answer.strip().strip("'\"")).expanduser()
         else:
             found = find_client_secret(downloads, started)
-        if found and found.exists() and valid_client_secret(found):
+            if found is None:
+                report(t("no_new_client_secret"))
+                continue
+        if found.exists() and valid_client_secret(found):
             break
         report(t("not_desktop_client"))
     CLIENT_SECRET.parent.mkdir(parents=True, exist_ok=True)
