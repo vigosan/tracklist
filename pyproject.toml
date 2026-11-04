@@ -20,4 +20,4 @@ dependencies = [
 tracklist = "tracklist:main"
 
 [tool.setuptools]
-py-modules = ["tracklist", "upload", "recognize_ui", "recognize_tui"]
+py-modules = ["messages", "tracklist", "upload", "recognize_ui", "recognize_tui"]

@@ -18,6 +18,8 @@ import urllib.request
 from http.cookiejar import MozillaCookieJar
 from pathlib import Path
 
+from messages import t
+
 BASE = "https://studio.youtube.com/youtubei/v1/creator"
 ORIGIN = "https://studio.youtube.com"
 STUDIO_CLIENT_VERSION = "1.20260805.02.02"
@@ -595,9 +597,7 @@ def render(entries, gaps, video_id, show_label, title=None):
     rows += [(start, {"gap": end - start, "end": end}) for start, end in gaps]
     for start, item in sorted(rows, key=lambda row: row[0]):
         if "gap" in item:
-            lines.append(
-                f"  - {hhmmss(start)} ????? (sin identificar, hasta {hhmmss(item['end'])})"
-            )
+            lines.append(f"  - {hhmmss(start)} {t('render_gap', end=hhmmss(item['end']))}")
             continue
         line = f"  - {hhmmss(start)} {item['artist']} - {item['title']}"
         if item.get("suggested"):
@@ -608,11 +608,11 @@ def render(entries, gaps, video_id, show_label, title=None):
     identified = sum(entry["duration"] for entry in entries)
     missing = sum(end - start for start, end in gaps)
     suggested = sum(1 for entry in entries if entry.get("suggested"))
-    suggested_part = f"{suggested} sugeridos, " if suggested else ""
+    suggested_part = t("render_suggested", count=suggested) if suggested else ""
     lines += [
         "",
-        f"{len(entries) - suggested} identificados, {suggested_part}{len(gaps)} huecos "
-        f"({hhmmss(missing)} sin identificar de {hhmmss(identified + missing)})",
+        t("render_summary", identified=len(entries) - suggested, suggested=suggested_part,
+          gaps=len(gaps), missing=hhmmss(missing), total=hhmmss(identified + missing)),
     ]
     return "\n".join(lines)
 

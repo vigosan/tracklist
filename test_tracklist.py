@@ -13,10 +13,15 @@ import urllib.request
 from pathlib import Path
 from unittest import mock
 
+import messages
 import recognize_tui
 import recognize_ui
 import tracklist
 import upload
+
+
+def setUpModule():
+    messages.LANGUAGE = "en"
 
 
 def sha(value, timestamp):
@@ -227,13 +232,42 @@ class RenderSuggestionsTest(unittest.TestCase):
         text = tracklist.render(entries, [], "video123456", False)
         self.assertIn("  - 00:00 A - T\n", text)
         self.assertIn("  - 01:00 B - U (?)", text)
-        self.assertIn("1 identificados, 1 sugeridos, 0 huecos", text)
+        self.assertIn("1 identified, 1 suggested, 0 gaps", text)
 
     def test_summary_omits_suggestions_when_none(self):
         entries = [{"artist": "A", "title": "T", "label": "", "start": 0, "duration": 60}]
         text = tracklist.render(entries, [], "video123456", False)
-        self.assertIn("1 identificados, 0 huecos", text)
-        self.assertNotIn("sugeridos", text)
+        self.assertIn("1 identified, 0 gaps", text)
+        self.assertNotIn("suggested", text)
+
+    def test_a_spanish_system_gets_the_tracklist_in_spanish(self):
+        entries = [{"artist": "A", "title": "T", "label": "", "start": 0, "duration": 60}]
+        with mock.patch.object(messages, "LANGUAGE", "es"):
+            text = tracklist.render(entries, [(60, 200)], "video123456", False)
+        self.assertIn("????? (sin identificar, hasta 03:20)", text)
+        self.assertIn("1 identificados, 1 huecos (02:20 sin identificar de 03:20)", text)
+
+    def test_unidentified_stretches_say_until_when_they_end(self):
+        text = tracklist.render([], [(60, 200)], "video123456", False)
+        self.assertIn("  - 01:00 ????? (unidentified, until 03:20)", text)
+        self.assertIn("(02:20 unidentified of 02:20)", text)
+
+
+class LanguageTest(unittest.TestCase):
+    def test_a_spanish_locale_shows_spanish(self):
+        self.assertEqual(messages.detect({"LANG": "es_ES.UTF-8"}), "es")
+
+    def test_any_other_locale_falls_back_to_english_so_nobody_gets_a_language_we_lack(self):
+        self.assertEqual(messages.detect({"LANG": "fr_FR.UTF-8"}), "en")
+        self.assertEqual(messages.detect({"LANG": "C"}), "en")
+        self.assertEqual(messages.detect({}), "en")
+
+    def test_lc_all_overrides_lang_as_the_locale_convention_says(self):
+        self.assertEqual(messages.detect({"LC_ALL": "es_ES.UTF-8", "LANG": "en_US.UTF-8"}), "es")
+        self.assertEqual(messages.detect({"LC_MESSAGES": "en_US.UTF-8", "LANG": "es_ES.UTF-8"}), "en")
+
+    def test_every_text_exists_in_both_languages_so_no_screen_breaks_halfway(self):
+        self.assertEqual(set(messages.MESSAGES["en"]), set(messages.MESSAGES["es"]))
 
 
 class PentestLineTest(unittest.TestCase):
@@ -1797,6 +1831,14 @@ class PackagingTest(unittest.TestCase):
         self.assertEqual(config["project"]["scripts"]["tracklist"], "tracklist:main")
         for module in config["tool"]["setuptools"]["py-modules"]:
             self.assertTrue((root / f"{module}.py").is_file(), module)
+
+    def test_every_module_is_installed_so_imports_work_after_uv_tool_install(self):
+        import tomllib
+
+        root = Path(tracklist.__file__).parent
+        config = tomllib.loads((root / "pyproject.toml").read_text())
+        modules = {path.stem for path in root.glob("*.py") if not path.stem.startswith("test_")}
+        self.assertEqual(set(config["tool"]["setuptools"]["py-modules"]), modules)
 
 
 if __name__ == "__main__":
