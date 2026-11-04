@@ -107,10 +107,45 @@ class StudioSessionTest(unittest.TestCase):
             tracklist.post(tracklist.CLAIMS_ENDPOINT, {}, tracklist.studio_session(self.COOKIES, 1))
         self.assertIn("STUDIO_CLIENT_VERSION", str(stop.exception.code))
 
+    def test_a_rejected_session_tells_the_user_which_account_to_sign_in_with(self):
+        def refuse(request):
+            raise urllib.error.HTTPError(request.full_url, 401, "Unauthorized", {}, io.BytesIO(b""))
+
+        self.replace_urlopen(refuse)
+        with self.assertRaises(SystemExit) as stop:
+            tracklist.post(tracklist.CLAIMS_ENDPOINT, {}, tracklist.studio_session(self.COOKIES, 1))
+        self.assertIn("YouTube rejected the session", str(stop.exception.code))
+
+    def test_a_spanish_system_gets_studio_errors_in_spanish(self):
+        def refuse(request):
+            raise urllib.error.HTTPError(request.full_url, 401, "Unauthorized", {}, io.BytesIO(b""))
+
+        self.replace_urlopen(refuse)
+        with mock.patch.object(messages, "LANGUAGE", "es"), self.assertRaises(SystemExit) as stop:
+            tracklist.post(tracklist.CLAIMS_ENDPOINT, {}, tracklist.studio_session(self.COOKIES, 1))
+        self.assertIn("YouTube rechazo la sesion", str(stop.exception.code))
+
     def replace_urlopen(self, fake):
         original = urllib.request.urlopen
         urllib.request.urlopen = fake
         self.addCleanup(setattr, urllib.request, "urlopen", original)
+
+
+class SafariAccessTest(unittest.TestCase):
+    def test_safari_without_disk_access_says_where_to_grant_it(self):
+        refused = subprocess.CompletedProcess([], 1, "", "Operation not permitted")
+        with mock.patch.object(tracklist.subprocess, "run", return_value=refused), \
+                self.assertRaises(SystemExit) as stop:
+            tracklist.browser_cookies("safari")
+        self.assertIn("System Settings > Privacy & Security > Full Disk Access", str(stop.exception.code))
+
+
+class ReinstallHintTest(unittest.TestCase):
+    def test_missing_dependencies_point_to_the_reinstall_command(self):
+        shown = io.StringIO()
+        with mock.patch.dict("sys.modules", {"shazamio": None}), contextlib.redirect_stderr(shown):
+            self.assertFalse(tracklist.recognition_available())
+        self.assertIn("Reinstall tracklist: uv tool install --force", shown.getvalue())
 
 
 class PlanSamplesTest(unittest.TestCase):
@@ -715,6 +750,11 @@ class ArgumentsTest(unittest.TestCase):
     def test_analysis_is_resumed_unless_fresh_is_requested(self):
         self.assertFalse(tracklist.build_parser().parse_args(["vid12345678"]).fresh)
         self.assertTrue(tracklist.build_parser().parse_args(["vid12345678", "--fresh"]).fresh)
+
+    def test_help_follows_the_system_language(self):
+        self.assertIn("URL or ID of the video, or an audio file", tracklist.build_parser().format_help())
+        with mock.patch.object(messages, "LANGUAGE", "es"):
+            self.assertIn("URL o ID del video, o fichero de audio", tracklist.build_parser().format_help())
 
     def test_the_mode_is_detected_instead_of_being_asked_for(self):
         parser = tracklist.build_parser()

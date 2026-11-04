@@ -96,7 +96,7 @@ def textual_available():
         import textual  # noqa: F401
     except ImportError:
         print(
-            f"{t('tui_missing')}\n{tracklist.REINSTALL}",
+            f"{t('tui_missing')}\n{t('reinstall')}",
             file=sys.stderr,
         )
         return False

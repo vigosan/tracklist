@@ -1,7 +1,4 @@
 #!/usr/bin/env python3
-"""Genera un tracklist con timestamps a partir de las reclamaciones de
-Content ID que YouTube Studio muestra para un video propio."""
-
 import argparse
 import asyncio
 import bisect
@@ -27,7 +24,6 @@ CLAIMS_ENDPOINT = f"{BASE}/list_creator_received_claims?alt=json"
 VIDEOS_ENDPOINT = f"{BASE}/get_creator_videos?alt=json"
 CONFIG_FILE = Path.home() / ".config" / "tracklist" / "config.json"
 SYSTEM_TOOLS = ["yt-dlp", "ffmpeg", "ffprobe"]
-REINSTALL = "Reinstala tracklist: uv tool install --force git+https://github.com/vigosan/tracklist"
 BROWSERS = {
     "chrome": "Google Chrome.app",
     "brave": "Brave Browser.app",
@@ -133,17 +129,11 @@ def browser_cookies(browser):
         try:
             result = subprocess.run(command, capture_output=True, text=True)
         except FileNotFoundError:
-            sys.exit("yt-dlp no esta instalado (brew install yt-dlp).")
+            sys.exit(t("ytdlp_missing"))
         if not jar_path.exists():
             if browser == "safari" and "Operation not permitted" in result.stderr:
-                sys.exit(
-                    "Terminal necesita \"Acceso total al disco\" para leer las cookies de Safari: "
-                    "Ajustes > Privacidad y seguridad > Acceso total al disco."
-                )
-            sys.exit(
-                f"No se pudieron leer las cookies de {browser}:\n"
-                f"{result.stderr.strip()[-300:]}"
-            )
+                sys.exit(t("safari_disk_access"))
+            sys.exit(t("cookies_failed", browser=browser, detail=result.stderr.strip()[-300:]))
         return parse_cookie_file(jar_path)
 
 
@@ -185,7 +175,7 @@ def current_browser():
         return saved
     browser = pick_browser(installed_browsers(APP_DIRS), browser_cookies)
     if browser is None:
-        sys.exit("Ningun navegador tiene sesion de YouTube: inicia sesion en studio.youtube.com y reintenta.")
+        sys.exit(t("no_browser_session"))
     save_browser(browser)
     return browser
 
@@ -208,10 +198,7 @@ def fresh_session():
     browser = current_browser()
     cookies = browser_cookies(browser)
     if "SAPISID" not in cookies:
-        sys.exit(
-            f"{browser} ya no tiene sesion de YouTube: entra en studio.youtube.com con {browser}"
-            " o elige otro con --browser."
-        )
+        sys.exit(t("browser_signed_out", browser=browser))
     return studio_session(cookies, int(time.time()))
 
 
@@ -227,16 +214,10 @@ def post(endpoint, payload, session):
             return json.load(response)
     except urllib.error.HTTPError as error:
         if error.code in (401, 403):
-            sys.exit(
-                "YouTube rechazo la sesion: entra en studio.youtube.com con la misma cuenta"
-                " que usa tracklist y reintenta."
-            )
+            sys.exit(t("session_rejected"))
         if error.code == 404:
-            sys.exit(
-                "Studio respondio 404: si pasa con todos los videos, STUDIO_CLIENT_VERSION"
-                f" ({STUDIO_CLIENT_VERSION}) esta caducada."
-            )
-        sys.exit(f"Error HTTP {error.code}: {error.read()[:300].decode(errors='replace')}")
+            sys.exit(t("studio_404", version=STUDIO_CLIENT_VERSION))
+        sys.exit(t("http_error", code=error.code, body=error.read()[:300].decode(errors="replace")))
 
 
 def fetch_claims(video_id, session):
@@ -469,7 +450,7 @@ def download_audio(video_id, directory):
     ]
     result = subprocess.run(command, capture_output=True, text=True)
     if result.returncode != 0 or not target.exists():
-        print("Aviso: no se pudo descargar el audio del video", file=sys.stderr)
+        print(t("download_audio_failed"), file=sys.stderr)
         return None
     return target
 
@@ -489,10 +470,7 @@ def recognize_gaps_async(video_id, gaps, progress, resume=None):
         from shazamio import Shazam
         from shazamio.exceptions import FailedDecodeJson
     except ImportError:
-        sys.exit(
-            "Faltan dependencias para reconocer con Shazam.\n"
-            f"{REINSTALL}"
-        )
+        sys.exit(f"{t('shazam_missing')}\n{t('reinstall')}")
 
     async def run():
         began = time.monotonic()
@@ -625,11 +603,7 @@ def recognition_available():
     try:
         import shazamio  # noqa: F401
     except ImportError:
-        print(
-            "Aviso: reconocimiento de huecos desactivado (faltan dependencias).\n"
-            f"{REINSTALL}",
-            file=sys.stderr,
-        )
+        print(f"{t('recognition_disabled')}\n{t('reinstall')}", file=sys.stderr)
         return False
     return True
 
@@ -645,18 +619,18 @@ def local_file(text):
 
 
 def build_parser():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("video", nargs="?", help="URL o ID del video, o fichero de audio")
-    parser.add_argument("--browser", choices=list(BROWSERS), help="navegador con la sesion de YouTube")
-    parser.add_argument("--from-json", metavar="FICHERO", help="usa una respuesta ya guardada")
-    parser.add_argument("--duration", type=int, help="duracion total en segundos, para el hueco final")
-    parser.add_argument("--label", action="store_true", help="muestra el sello de cada track")
-    parser.add_argument("--fresh", action="store_true", help="ignora el analisis previo y empieza de cero")
+    parser = argparse.ArgumentParser(description=t("description"))
+    parser.add_argument("video", nargs="?", help=t("help_video"))
+    parser.add_argument("--browser", choices=list(BROWSERS), help=t("help_browser"))
+    parser.add_argument("--from-json", metavar=t("metavar_file"), help=t("help_from_json"))
+    parser.add_argument("--duration", type=int, help=t("help_duration"))
+    parser.add_argument("--label", action="store_true", help=t("help_label"))
+    parser.add_argument("--fresh", action="store_true", help=t("help_fresh"))
     parser.add_argument(
         "--recognize",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="identifica los huecos con Shazam (activado por defecto)",
+        help=t("help_recognize"),
     )
     return parser
 
@@ -664,20 +638,20 @@ def build_parser():
 def main():
     absent = missing_tools()
     if absent:
-        sys.exit(f"Falta {', '.join(absent)}: brew install yt-dlp ffmpeg")
+        sys.exit(t("tools_missing", tools=", ".join(absent)))
     parser = build_parser()
     args = parser.parse_args()
 
     if args.browser:
         save_browser(args.browser)
     if not args.video and sys.stdin.isatty() and sys.stderr.isatty():
-        print("URL o ID del video, o fichero de audio: ", end="", file=sys.stderr, flush=True)
+        print(t("ask_video"), end="", file=sys.stderr, flush=True)
         try:
             args.video = input().strip()
         except EOFError:
             print(file=sys.stderr)
     if not args.video:
-        parser.error("indica la URL o el ID del video")
+        parser.error(t("video_required"))
 
     import upload
 
@@ -691,7 +665,7 @@ def main():
         try:
             video_id = upload.prepare(local, report)
         except upload.QuotaExceeded:
-            sys.exit("Cuota de subidas de YouTube agotada: prueba manana")
+            sys.exit(t("quota_exhausted"))
         audio = local
     else:
         original_id = parse_video_id(args.video)
@@ -725,7 +699,7 @@ def main():
     if args.from_json:
         entries = extract(json.loads(Path(args.from_json).read_text()))
         if not entries:
-            sys.exit("Sin reclamaciones con timestamp para este video.")
+            sys.exit(t("no_timestamped_claims"))
     else:
         session, entries = try_claims(video_id)
         if duration is None and session is not None:
@@ -736,11 +710,11 @@ def main():
         if duration is None:
             duration = load_cache(video_id)["duration"] or probe_duration(video_id)
         if not entries and duration is None:
-            sys.exit("No se pudo leer la duracion del video.")
+            sys.exit(t("duration_unknown"))
 
     gaps = find_gaps(entries, duration) if entries else scan_gaps(duration)
     if not entries and not gaps:
-        sys.exit("El video es demasiado corto para analizarlo.")
+        sys.exit(t("too_short"))
     if args.recognize and gaps and recognition_available():
         import recognize_ui
 

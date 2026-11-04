@@ -9,6 +9,7 @@ import webbrowser
 from pathlib import Path
 
 import tracklist
+from messages import t
 
 CONFIG_DIR = Path.home() / ".config" / "tracklist"
 UPLOADS_FILE = CONFIG_DIR / "uploads.json"
@@ -249,7 +250,7 @@ def youtube_client():
     except ImportError:
         sys.exit(
             "Faltan dependencias para subir audio.\n"
-            f"{tracklist.REINSTALL}"
+            f"{t('reinstall')}"
         )
     if not CLIENT_SECRET.exists():
         if sys.stdin.isatty() and sys.stderr.isatty():
