@@ -1590,6 +1590,15 @@ class AdoptTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
         self.assertEqual(len(self.uploaded), 1)
         self.assertEqual(len(commands), 1)
 
+    def test_a_copy_already_uploaded_is_reused_even_after_the_download_was_deleted(self):
+        upload.remember(upload.remote_key("orig1234567"), "copia123456")
+        waits = []
+        upload.wait_for_processing = lambda client, video_id, report: waits.append(("processing", video_id))
+        upload.wait_for_claims = lambda video_id, report: waits.append(("claims", video_id))
+        self.assertEqual(self.adopt(), ("copia123456", None, "Set ajeno", True))
+        self.assertEqual((self.uploaded, self.downloads), ([], 0))
+        self.assertEqual(waits, [("processing", "copia123456"), ("claims", "copia123456")])
+
     def test_without_a_google_login_it_keeps_working_with_shazam_alone(self):
         self.client_error = SystemExit("Falta la credencial")
         self.assertEqual(self.adopt(), ("orig1234567", None, None, False))

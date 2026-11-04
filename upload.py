@@ -319,6 +319,12 @@ def adopt(video_id, report):
         return video_id, None, None, False
     if mine:
         return video_id, None, None, True
+    copy = load_uploads().get(remote_key(video_id))
+    if copy:
+        report(t("already_uploaded", video_id=copy))
+        wait_for_processing(client, copy, report)
+        wait_for_claims(copy, report)
+        return copy, downloaded_audio(video_id), title, True
     audio = download_foreign(video_id)
     if audio is None:
         report(t("download_failed_shazam"))
