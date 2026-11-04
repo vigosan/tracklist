@@ -1690,6 +1690,29 @@ class AdoptTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
         self.assertNotIn("copia123456", output.getvalue())
 
 
+class FromJsonTest(unittest.TestCase):
+    def test_a_saved_claims_response_never_asks_google_or_uploads_anything(self):
+        claim = {"receivedClaims": [{
+            "matchDetails": {"longestMatchStartTimeSeconds": 0, "longestMatchDurationSeconds": 300},
+            "asset": {"metadata": {"soundRecording": {"title": "Kisses of Fire", "artists": ["La Luna"]}}},
+        }]}
+        adopted = []
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            saved = Path(tmp) / "claims.json"
+            saved.write_text(json.dumps(claim))
+            with mock.patch.object(tracklist, "missing_tools", lambda: []), \
+                    mock.patch.object(upload, "adopt", lambda video_id, report: adopted.append(video_id)), \
+                    mock.patch.object(upload, "offer_delete", lambda video_id: None), \
+                    mock.patch("sys.argv", ["tracklist", "orig1234567", "--from-json", str(saved),
+                                            "--no-recognize", "--duration", "600"]), \
+                    contextlib.redirect_stdout(output):
+                tracklist.main()
+        self.assertEqual(adopted, [])
+        self.assertIn("La Luna - Kisses of Fire", output.getvalue())
+        self.assertIn("watch?v=orig1234567", output.getvalue())
+
+
 class LocalFileTest(unittest.TestCase):
     def test_an_existing_recording_takes_the_upload_path(self):
         with tempfile.TemporaryDirectory() as tmp:

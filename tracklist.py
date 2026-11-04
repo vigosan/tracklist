@@ -673,7 +673,9 @@ def main():
         own = True
     else:
         original_id = parse_video_id(args.video)
-        video_id, audio, original_title, own = upload.adopt(original_id, report)
+        video_id, audio, own = original_id, None, False
+        if not args.from_json:
+            video_id, audio, original_title, own = upload.adopt(original_id, report)
     shown_id = original_id or video_id
     if args.fresh:
         clear_cache(video_id)
