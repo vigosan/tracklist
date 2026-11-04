@@ -29,6 +29,7 @@ MIN_GAP_SECONDS = 90
 SAMPLE_SECONDS = 10
 SAMPLE_INTERVAL = 90
 SAMPLE_LEAD = 15
+MERGE_WINDOW_SECONDS = 180
 START_WORKERS = 3
 MAX_WORKERS = 3
 RECOVER_AFTER = 6
@@ -369,14 +370,17 @@ def drop_claimed(claimed, suggestions):
     ]
 
 
+def within_merge_window(entry, start):
+    return start - (entry["start"] + entry["duration"]) <= MERGE_WINDOW_SECONDS
+
+
 def merge_samples(samples):
     suggestions = []
     previous = None
     for offset, match in samples:
         if match is None:
-            previous = None
             continue
-        if previous and same_track(previous, match):
+        if previous and same_track(previous, match) and within_merge_window(previous, offset):
             previous["duration"] = offset + SAMPLE_SECONDS - previous["start"]
             continue
         previous = {**match, "label": "", "start": offset, "duration": SAMPLE_SECONDS, "suggested": True}

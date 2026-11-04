@@ -99,15 +99,6 @@ class MergeSamplesTest(unittest.TestCase):
             ],
         )
 
-    def test_missing_result_breaks_a_run(self):
-        match = {"artist": "X", "title": "Y"}
-        samples = [(15, match), (75, None), (135, match)]
-        merged = tracklist.merge_samples(samples)
-        self.assertEqual(
-            [(s["start"], s["duration"]) for s in merged],
-            [(15, 10), (135, 10)],
-        )
-
 
 class BaseTitleTest(unittest.TestCase):
     def test_a_parenthesised_remix_reduces_to_the_plain_title(self):
@@ -152,11 +143,6 @@ class MergeVariantTitlesTest(unittest.TestCase):
         self.assertEqual(len(merged), 1)
         self.assertEqual(merged[0]["title"], "Try (MICHAEL WOODS REMIX)")
         self.assertEqual(merged[0]["duration"], 70)
-
-    def test_the_same_track_apart_in_time_stays_two_entries(self):
-        match = {"artist": "X", "title": "Y"}
-        merged = tracklist.merge_samples([(15, match), (75, None), (135, match)])
-        self.assertEqual(len(merged), 2)
 
 
 class DropClaimedSuggestionsTest(unittest.TestCase):
@@ -1256,6 +1242,25 @@ class DeleteScopeTest(unittest.TestCase):
                 upload.youtube_client()
             flow.run_local_server.assert_called_once()
 
+
+class MergeAcrossRecognitionGapTest(unittest.TestCase):
+    def test_one_track_survives_a_sample_that_recognised_nothing(self):
+        match = {"artist": "Kay Cee", "title": "Millenium Stringz"}
+        merged = tracklist.merge_samples([(15, match), (105, None), (195, match)])
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]["start"], 15)
+        self.assertEqual(merged[0]["duration"], 190)
+
+    def test_a_track_played_twice_in_a_set_stays_two_entries(self):
+        encore = {"artist": "Kay Cee", "title": "Millenium Stringz"}
+        other = {"artist": "Transa", "title": "Supernova"}
+        merged = tracklist.merge_samples([(15, encore), (105, other), (195, encore)])
+        self.assertEqual(len(merged), 3)
+
+    def test_a_distant_repeat_is_not_folded_into_one_entry(self):
+        match = {"artist": "Kay Cee", "title": "Millenium Stringz"}
+        merged = tracklist.merge_samples([(15, match), (600, match)])
+        self.assertEqual(len(merged), 2)
 
 if __name__ == "__main__":
     unittest.main()
