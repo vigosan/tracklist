@@ -22,7 +22,7 @@ https://www.youtube.com/watch?v=XXXXXXXXXXX
    - **Someone else's video:** tracklist downloads the audio with `yt-dlp`, uploads it as a **private** video to your channel through the YouTube Data API, waits for processing and for Content ID to finish (up to an hour), and then reads the claims of that copy.
    - **A local audio file:** it is converted to a video with `ffmpeg` and uploaded the same way.
 3. **Shazam for the gaps.** Any stretch of 90 seconds or more without a claim is sampled every 90 seconds (10-second clips) and recognised with Shazam. Shazam matches are marked with `(?)`, merged with neighbouring samples of the same track, and dropped when they repeat a claimed track. Whatever stays unidentified is listed as `?????` with its time range.
-4. **Fallback.** If nothing can be uploaded (upload quota used up, no Studio session, download failed), tracklist scans the whole video with Shazam alone.
+4. **Fallback.** For a YouTube URL, if nothing can be uploaded (upload quota used up, no Google login, download failed, no Studio session), tracklist scans the whole video with Shazam alone. A local file has no video to fall back on, so with the quota used up tracklist stops.
 5. **Cleanup.** At the end it offers to delete the private copy it uploaded.
 
 Progress is cached, so an interrupted analysis resumes where it stopped.
@@ -40,9 +40,12 @@ To update: `uv tool install --force git+https://github.com/vigosan/tracklist`.
 
 ## First run
 
-1. Sign in to YouTube in your browser. tracklist detects which browser has the session and remembers it; to pick one yourself use `--browser` (chrome, brave, edge, firefox, safari, vivaldi, opera, chromium). Safari needs "Full Disk Access" for your terminal (System Settings > Privacy & Security).
-2. A wizard walks you through creating your own Google credential: a Google Cloud project with the YouTube Data API v3 enabled and an OAuth client of type "Desktop app".
-3. Your browser opens so you can sign in with Google and authorise uploads.
+You need a YouTube channel on your Google account: Content ID claims and uploads live there.
+
+1. Sign in to YouTube in your browser. tracklist detects which browser has the session and remembers it; to pick one yourself use `--browser` (chrome, brave, edge, firefox, safari, vivaldi, opera, chromium). Safari needs "Full Disk Access" for your terminal app (Terminal, iTerm, Ghostty...) in System Settings > Privacy & Security.
+2. macOS asks for your keychain password so tracklist can read the browser's cookies: choose "Always Allow" so it doesn't ask on every run.
+3. A wizard walks you through creating your own Google credential: a Google Cloud project with the YouTube Data API v3 enabled and an OAuth client of type "Desktop app".
+4. Your browser opens so you can sign in with Google and authorise access. The permission Google asks for (`youtube`) gives tracklist control of your channel; it only uploads private copies and deletes the copies it uploaded.
 
 ## Usage
 
