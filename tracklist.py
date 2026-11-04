@@ -213,8 +213,10 @@ def post(endpoint, payload, session):
         with urllib.request.urlopen(request) as response:
             return json.load(response)
     except urllib.error.HTTPError as error:
-        if error.code in (401, 403):
+        if error.code == 401:
             sys.exit(t("session_rejected"))
+        if error.code == 403:
+            sys.exit(t("studio_other_account"))
         if error.code == 404:
             sys.exit(t("studio_404", version=STUDIO_CLIENT_VERSION))
         sys.exit(t("http_error", code=error.code, body=error.read()[:300].decode(errors="replace")))
@@ -299,15 +301,14 @@ def find_gaps(entries, total=None):
     return gaps
 
 
-def try_claims(video_id):
+def try_claims(video_id, own=False):
     try:
         session = fresh_session()
         entries = extract(fetch_claims(video_id, session))
-    except SystemExit:
-        return None, []
-    if not entries:
-        return session, []
-    return session, entries
+    except SystemExit as error:
+        stale = error.code == t("studio_404", version=STUDIO_CLIENT_VERSION)
+        return None, [], error.code if own or stale else None
+    return session, entries, None
 
 
 def scan_gaps(duration):
@@ -667,9 +668,10 @@ def main():
         except upload.QuotaExceeded:
             sys.exit(t("quota_exhausted"))
         audio = local
+        own = True
     else:
         original_id = parse_video_id(args.video)
-        video_id, audio, original_title = upload.adopt(original_id, report)
+        video_id, audio, original_title, own = upload.adopt(original_id, report)
     shown_id = original_id or video_id
     if args.fresh:
         clear_cache(video_id)
@@ -684,7 +686,7 @@ def main():
             import recognize_tui
 
             found, entries, gaps, duration, title, error = recognize_tui.run_app(
-                video_id, args.duration, args.label
+                video_id, args.duration, args.label, own
             )
             if error:
                 sys.exit(error)
@@ -701,7 +703,9 @@ def main():
         if not entries:
             sys.exit(t("no_timestamped_claims"))
     else:
-        session, entries = try_claims(video_id)
+        session, entries, failure = try_claims(video_id, own)
+        if failure:
+            report(failure)
         if duration is None and session is not None:
             info = fetch_videos([video_id], session).get(video_id)
             if info:

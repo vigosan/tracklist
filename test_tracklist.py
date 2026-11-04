@@ -116,6 +116,16 @@ class StudioSessionTest(unittest.TestCase):
             tracklist.post(tracklist.CLAIMS_ENDPOINT, {}, tracklist.studio_session(self.COOKIES, 1))
         self.assertIn("YouTube rejected the session", str(stop.exception.code))
 
+    def test_a_forbidden_video_says_the_browser_has_another_account_open(self):
+        def refuse(request):
+            raise urllib.error.HTTPError(request.full_url, 403, "Forbidden", {}, io.BytesIO(b""))
+
+        self.replace_urlopen(refuse)
+        with self.assertRaises(SystemExit) as stop:
+            tracklist.post(tracklist.CLAIMS_ENDPOINT, {}, tracklist.studio_session(self.COOKIES, 1))
+        self.assertIn("The browser has another YouTube account open", str(stop.exception.code))
+        self.assertIn("--browser", str(stop.exception.code))
+
     def test_a_spanish_system_gets_studio_errors_in_spanish(self):
         def refuse(request):
             raise urllib.error.HTTPError(request.full_url, 401, "Unauthorized", {}, io.BytesIO(b""))
@@ -765,7 +775,7 @@ class ArgumentsTest(unittest.TestCase):
 
 
 class TryClaimsTest(unittest.TestCase):
-    def call(self, session_error=None, claims_error=None, response=None):
+    def call(self, session_error=None, claims_error=None, response=None, own=False):
         original = (tracklist.fresh_session, tracklist.fetch_claims)
 
         def fake_session():
@@ -781,7 +791,7 @@ class TryClaimsTest(unittest.TestCase):
         tracklist.fresh_session = fake_session
         tracklist.fetch_claims = fake_claims
         try:
-            return tracklist.try_claims("vid12345678")
+            return tracklist.try_claims("vid12345678", own)
         finally:
             tracklist.fresh_session, tracklist.fetch_claims = original
 
@@ -790,23 +800,82 @@ class TryClaimsTest(unittest.TestCase):
             "matchDetails": {"longestMatchStartTimeSeconds": 60, "longestMatchDurationSeconds": 30},
             "asset": {"metadata": {"soundRecording": {"title": "T", "artists": ["A"]}}},
         }]}
-        session, entries = self.call(response=response)
+        session, entries, failure = self.call(response=response)
         self.assertIsNotNone(session)
         self.assertEqual(entries[0]["title"], "T")
+        self.assertIsNone(failure)
 
     def test_a_video_without_claims_reports_no_entries(self):
-        session, entries = self.call(response={"receivedClaims": []})
+        session, entries, failure = self.call(response={"receivedClaims": []})
         self.assertEqual(entries, [])
 
     def test_a_missing_session_falls_back_instead_of_exiting(self):
-        session, entries = self.call(session_error=SystemExit("sin sesion"))
+        session, entries, failure = self.call(session_error=SystemExit("sin sesion"))
         self.assertIsNone(session)
         self.assertEqual(entries, [])
 
-    def test_a_rejected_session_falls_back_instead_of_exiting(self):
-        session, entries = self.call(claims_error=SystemExit("403"))
+    def test_a_foreign_video_refused_by_studio_falls_back_quietly_since_403_is_expected_there(self):
+        session, entries, failure = self.call(claims_error=SystemExit("403"))
         self.assertIsNone(session)
         self.assertEqual(entries, [])
+        self.assertIsNone(failure)
+
+    def test_studio_refusing_my_own_video_is_reported_because_only_the_user_can_fix_it(self):
+        session, entries, failure = self.call(claims_error=SystemExit("403"), own=True)
+        self.assertIsNone(session)
+        self.assertEqual(failure, "403")
+
+    def test_an_outdated_client_version_is_reported_even_for_foreign_videos_since_it_breaks_every_video(self):
+        stale = tracklist.t("studio_404", version=tracklist.STUDIO_CLIENT_VERSION)
+        session, entries, failure = self.call(claims_error=SystemExit(stale))
+        self.assertEqual(failure, stale)
+
+
+class StudioFailureMainTest(unittest.TestCase):
+    COOKIES = {"SAPISID": "a", "__Secure-1PAPISID": "b", "__Secure-3PAPISID": "c"}
+
+    def run_main(self, own, code, *flags):
+        def refuse(request, *args, **kwargs):
+            raise urllib.error.HTTPError(request.full_url, code, "No", {}, io.BytesIO(b""))
+
+        errors = io.StringIO()
+        with mock.patch.object(tracklist, "missing_tools", lambda: []), \
+                mock.patch.object(upload, "adopt", lambda video_id, report: (video_id, None, None, own)), \
+                mock.patch.object(upload, "offer_delete", lambda video_id: None), \
+                mock.patch.object(tracklist, "fresh_session", lambda: tracklist.studio_session(self.COOKIES, 1)), \
+                mock.patch.object(tracklist, "load_cache", lambda video_id: {"samples": {}, "title": None, "duration": None}), \
+                mock.patch.object(urllib.request, "urlopen", refuse), \
+                mock.patch("sys.argv", ["tracklist", "orig1234567", "--duration", "600", *flags]), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(errors):
+            tracklist.main()
+        return errors.getvalue()
+
+    def test_my_own_video_refused_by_studio_tells_me_to_switch_account(self):
+        self.assertIn("The browser has another YouTube account open", self.run_main(True, 403, "--no-recognize"))
+
+    def test_a_spanish_system_gets_the_switch_account_hint_in_spanish(self):
+        with mock.patch.object(messages, "LANGUAGE", "es"):
+            errors = self.run_main(True, 403, "--no-recognize")
+        self.assertIn("El navegador tiene abierta otra cuenta de YouTube", errors)
+
+    def test_a_foreign_video_refused_by_studio_falls_back_to_shazam_without_alarming_the_user(self):
+        self.assertNotIn("another YouTube account", self.run_main(False, 403, "--no-recognize"))
+
+    def test_an_outdated_client_version_is_shown_even_for_a_foreign_video(self):
+        self.assertIn("STUDIO_CLIENT_VERSION", self.run_main(False, 404, "--no-recognize"))
+
+    def test_the_tui_is_told_the_video_is_mine(self):
+        seen = []
+
+        def fake_app(video_id, duration, label, own):
+            seen.append(own)
+            return [], [], [], 600, None, None
+
+        with mock.patch.object(tracklist, "recognition_available", lambda: True), \
+                mock.patch.object(recognize_ui, "textual_available", lambda: True), \
+                mock.patch.object(recognize_tui, "run_app", fake_app):
+            self.run_main(True, 403)
+        self.assertEqual(seen, [True])
 
 
 class AutoModeTest(unittest.TestCase):
@@ -1297,9 +1366,10 @@ class WaitForClaimsTest(unittest.TestCase):
     def wait(self, counts, session=True):
         polls = iter(counts)
         original = tracklist.try_claims
-        tracklist.try_claims = lambda video_id: (
+        tracklist.try_claims = lambda video_id, own: (
             ({} if session else None),
             [{"start": 0}] * next(polls),
+            None if session else "Studio said no",
         )
         time = FakeTime()
         messages = []
@@ -1316,8 +1386,8 @@ class WaitForClaimsTest(unittest.TestCase):
     def test_without_a_studio_session_it_stops_so_claims_are_not_skipped(self):
         with self.assertRaises(SystemExit) as stop:
             self.wait([0], session=False)
-        self.assertIn("studio.youtube.com", str(stop.exception.code))
-        self.assertIn("same account", str(stop.exception.code))
+        self.assertIn("Studio said no", str(stop.exception.code))
+        self.assertIn("https://youtu.be/vid12345678", str(stop.exception.code))
 
     def test_giving_up_tells_the_user_to_retry_later(self):
         polls = upload.CLAIMS_TIMEOUT // upload.CLAIMS_POLL + 1
@@ -1492,12 +1562,12 @@ class AdoptTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
 
     def test_my_own_video_is_read_directly_without_uploading(self):
         self.owner = (True, "Mi set")
-        self.assertEqual(self.adopt(), ("orig1234567", None, None))
+        self.assertEqual(self.adopt(), ("orig1234567", None, None, True))
         self.assertEqual((self.uploaded, self.downloads), ([], 0))
 
     def test_a_foreign_video_is_uploaded_with_its_original_title(self):
-        video_id, audio, title = self.adopt()
-        self.assertEqual((video_id, title), ("copia123456", "Set ajeno"))
+        video_id, audio, title, own = self.adopt()
+        self.assertEqual((video_id, title, own), ("copia123456", "Set ajeno", True))
         self.assertEqual(audio, upload.downloads_dir() / "orig1234567.webm")
         self.assertEqual(self.uploaded, ["Set ajeno"])
 
@@ -1522,7 +1592,7 @@ class AdoptTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
 
     def test_without_a_google_login_it_keeps_working_with_shazam_alone(self):
         self.client_error = SystemExit("Falta la credencial")
-        self.assertEqual(self.adopt(), ("orig1234567", None, None))
+        self.assertEqual(self.adopt(), ("orig1234567", None, None, False))
         self.assertTrue(any("Shazam only" in message for message in self.messages))
 
     def test_an_account_without_a_channel_keeps_working_with_shazam_alone(self):
@@ -1530,7 +1600,7 @@ class AdoptTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
             raise SystemExit("Tu cuenta de Google no tiene canal de YouTube")
 
         upload.video_owner = no_channel
-        self.assertEqual(self.adopt(), ("orig1234567", None, None))
+        self.assertEqual(self.adopt(), ("orig1234567", None, None, False))
         self.assertTrue(any("Shazam only" in message for message in self.messages))
 
     def test_an_api_error_while_checking_ownership_falls_back_to_shazam(self):
@@ -1540,7 +1610,7 @@ class AdoptTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
             raise HttpError(mock.Mock(status=403, reason="quota"), b"quotaExceeded")
 
         upload.video_owner = failing
-        self.assertEqual(self.adopt(), ("orig1234567", None, None))
+        self.assertEqual(self.adopt(), ("orig1234567", None, None, False))
         self.assertTrue(any("Shazam only" in message for message in self.messages))
 
     def test_an_interrupted_wait_already_remembers_which_copy_belongs_to_the_original(self):
@@ -1554,16 +1624,16 @@ class AdoptTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
 
     def test_a_video_that_cannot_be_downloaded_falls_back_to_shazam(self):
         upload.download_foreign = lambda video_id: None
-        self.assertEqual(self.adopt(), ("orig1234567", None, "Set ajeno"))
+        self.assertEqual(self.adopt(), ("orig1234567", None, "Set ajeno", False))
         self.assertIn("Could not download the video: continuing with Shazam only", self.messages)
 
     def test_an_exhausted_quota_falls_back_to_shazam_instead_of_stopping(self):
         self.quota_error = True
-        self.assertEqual(self.adopt(), ("orig1234567", None, "Set ajeno"))
+        self.assertEqual(self.adopt(), ("orig1234567", None, "Set ajeno", False))
         self.assertIn("YouTube upload quota used up: continuing with Shazam only", self.messages)
 
     def test_deleting_the_uploaded_copy_also_deletes_the_download(self):
-        video_id, audio, title = self.adopt()
+        video_id, audio, title, own = self.adopt()
         upload.forget_upload(video_id)
         self.assertFalse(audio.exists())
         self.assertFalse(any(key.startswith("youtube:") for key in upload.load_uploads()))
@@ -1572,10 +1642,10 @@ class AdoptTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
         names = ("adopt", "offer_delete")
         original = {name: getattr(upload, name) for name in names}
         original_tracklist = {name: getattr(tracklist, name) for name in ("try_claims", "fetch_videos", "missing_tools")}
-        upload.adopt = lambda video_id, report: ("copia123456", None, "Set")
+        upload.adopt = lambda video_id, report: ("copia123456", None, "Set", True)
         upload.offer_delete = lambda video_id: None
         tracklist.missing_tools = lambda: []
-        tracklist.try_claims = lambda video_id: (None, [{"start": 0, "duration": 60, "title": "Tema", "artist": "A"}])
+        tracklist.try_claims = lambda video_id, own: (None, [{"start": 0, "duration": 60, "title": "Tema", "artist": "A"}], None)
         tracklist.fetch_videos = lambda ids, session: {}
 
         def restore():
@@ -1655,7 +1725,7 @@ class RefreshKeyTest(unittest.TestCase):
                     await pilot.press("q")
             asyncio.run(scenario())
 
-        with mock.patch.object(tracklist, "try_claims", lambda video_id: ({}, next(looks))), \
+        with mock.patch.object(tracklist, "try_claims", lambda video_id, own: ({}, next(looks), None)), \
                 mock.patch.object(tracklist, "recognize_gaps_async", no_recognition), \
                 mock.patch.object(App, "run", drive):
             _, entries, gaps, _, _, _ = recognize_tui.run_app("dnS4s0gar-4", 600, False)
@@ -1709,7 +1779,7 @@ class TypedUrlHintTest(unittest.TestCase):
                     await pilot.press("q")
             asyncio.run(scenario())
 
-        with mock.patch.object(tracklist, "try_claims", lambda video_id: (None, [])), \
+        with mock.patch.object(tracklist, "try_claims", lambda video_id, own: (None, [], None)), \
                 mock.patch.object(tracklist, "recognize_gaps_async", no_recognition), \
                 mock.patch.object(App, "run", drive):
             recognize_tui.run_app("dnS4s0gar-4", 600, False)
@@ -1720,6 +1790,42 @@ class TypedUrlHintTest(unittest.TestCase):
 
     def test_the_hint_is_not_shown_for_the_video_tracklist_was_launched_with(self):
         self.assertNotIn(self.HINT, [line.strip() for line in self.log_after_loading(None)])
+
+
+class TuiStudioFailureTest(unittest.TestCase):
+    MESSAGE = "The browser has another YouTube account open"
+
+    def log_after_loading(self, own):
+        from textual.app import App
+
+        async def no_recognition(video_id, gaps, progress, resume=None):
+            return []
+
+        def refuse(video_id, session):
+            raise SystemExit(f"{self.MESSAGE}: switch")
+
+        logged = []
+
+        def drive(app, *args, **kwargs):
+            async def scenario():
+                async with app.run_test() as pilot:
+                    await app.workers.wait_for_complete()
+                    logged.extend(line.text for line in app.query_one("#log").lines)
+                    await pilot.press("q")
+            asyncio.run(scenario())
+
+        with mock.patch.object(tracklist, "fresh_session", lambda: {"headers": {}, "context": {}}), \
+                mock.patch.object(tracklist, "fetch_claims", refuse), \
+                mock.patch.object(tracklist, "recognize_gaps_async", no_recognition), \
+                mock.patch.object(App, "run", drive):
+            recognize_tui.run_app("dnS4s0gar-4", 600, False, own)
+        return "\n".join(logged)
+
+    def test_studio_refusing_my_own_video_is_shown_in_the_log(self):
+        self.assertIn(f"[!] {self.MESSAGE}", self.log_after_loading(True))
+
+    def test_a_foreign_video_keeps_the_quiet_fallback(self):
+        self.assertNotIn(self.MESSAGE, self.log_after_loading(False))
 
 
 class OfferDeleteTest(IsolatedUploads, unittest.TestCase):

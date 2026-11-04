@@ -68,7 +68,7 @@ def initial_state(now):
     }
 
 
-def run_app(video_id, duration, label):
+def run_app(video_id, duration, label, own=False):
     from textual.app import App, ComposeResult
     from textual.containers import Horizontal, Vertical, VerticalScroll
     from textual.widgets import Footer, Input, Label, ProgressBar, RichLog, Static
@@ -93,9 +93,10 @@ def run_app(video_id, duration, label):
             ("escape", "cancel", t("key_cancel")),
         ]
 
-        def __init__(self, video_id, duration, label):
+        def __init__(self, video_id, duration, label, own):
             super().__init__()
             self.video_id = video_id
+            self.own = own
             self.entries = []
             self.gaps = []
             self.duration = duration
@@ -161,9 +162,11 @@ def run_app(video_id, duration, label):
         async def load(self):
             self.state["phase"] = "claims"
             self.log_line(t("log_querying"))
-            self.session, self.entries = await asyncio.to_thread(
-                tracklist.try_claims, self.video_id
+            self.session, self.entries, failure = await asyncio.to_thread(
+                tracklist.try_claims, self.video_id, self.own
             )
+            if failure:
+                self.log_line(f"[!] {failure}")
             if self.typed and self.session is None:
                 self.log_line(t("log_foreign_hint"))
             self.on_progress(("claims", len(self.entries)))
@@ -369,6 +372,7 @@ def run_app(video_id, duration, label):
             if not new_id:
                 return
             self.video_id = new_id
+            self.own = False
             self.typed = True
             self.entries = []
             self.gaps = []
@@ -376,7 +380,7 @@ def run_app(video_id, duration, label):
             self.duration = None
             self.restart()
 
-    app = RecognizeApp(video_id, duration, label)
+    app = RecognizeApp(video_id, duration, label, own)
     app.run()
     app.close_active()
     return app.suggestions, app.entries, app.gaps, app.duration, app.title_line, app.error

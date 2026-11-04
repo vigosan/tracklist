@@ -139,9 +139,9 @@ def wait_for_claims(video_id, report, sleep=time.sleep, clock=time.monotonic):
     began = clock()
     counts = []
     while True:
-        session, entries = tracklist.try_claims(video_id)
-        if session is None:
-            sys.exit(t("claims_unreadable", video_id=video_id))
+        _, entries, failure = tracklist.try_claims(video_id, own=True)
+        if failure:
+            sys.exit(t("claims_unreadable", failure=failure, video_id=video_id))
         counts.append(len(entries))
         elapsed = clock() - began
         report(t("claims_count", count=len(entries), elapsed=tracklist.hhmmss(int(elapsed))))
@@ -309,26 +309,26 @@ def adopt(video_id, report):
         client = youtube_client()
     except SystemExit as error:
         report(f"{error}\n{t('shazam_only')}")
-        return video_id, None, None
+        return video_id, None, None, False
     from googleapiclient.errors import HttpError
 
     try:
         mine, title = video_owner(client, video_id)
     except (SystemExit, HttpError) as error:
         report(f"{error}\n{t('shazam_only')}")
-        return video_id, None, None
+        return video_id, None, None, False
     if mine:
-        return video_id, None, None
+        return video_id, None, None, True
     audio = download_foreign(video_id)
     if audio is None:
         report(t("download_failed_shazam"))
-        return video_id, None, title
+        return video_id, None, title, False
     try:
         uploaded = prepare(audio, report, title, lambda copy: remember(remote_key(video_id), copy))
     except QuotaExceeded:
         report(t("quota_shazam"))
-        return video_id, None, title
-    return uploaded, audio, title
+        return video_id, None, title, False
+    return uploaded, audio, title, True
 
 
 def delete_video(client, video_id):
