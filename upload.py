@@ -23,14 +23,11 @@ CLAIMS_STABLE_POLLS = 3
 CLAIMS_TIMEOUT = 3600
 LEFTOVER_SUFFIXES = (".part", ".ytdl", ".temp")
 CONSOLE_STEPS = [
-    ("https://console.cloud.google.com/projectcreate", "crea un proyecto (cualquier nombre)"),
-    ("https://console.cloud.google.com/apis/library/youtube.googleapis.com", "pulsa Habilitar"),
-    ("https://console.cloud.google.com/auth/branding", "rellena nombre y correo, tipo Externo"),
-    ("https://console.cloud.google.com/auth/audience",
-     "pulsa 'Publicar app' para que el login no caduque cada 7 dias "
-     "(veras un aviso de app no verificada: es tu propia app)"),
-    ("https://console.cloud.google.com/auth/clients/create",
-     "tipo 'App de escritorio', crear y descargar el JSON"),
+    ("https://console.cloud.google.com/projectcreate", "step_project"),
+    ("https://console.cloud.google.com/apis/library/youtube.googleapis.com", "step_enable"),
+    ("https://console.cloud.google.com/auth/branding", "step_branding"),
+    ("https://console.cloud.google.com/auth/audience", "step_publish"),
+    ("https://console.cloud.google.com/auth/clients/create", "step_client"),
 ]
 CONSOLE_URLS = [url for url, _ in CONSOLE_STEPS]
 DOWNLOAD_OPTIONS = ["-N", "4", "--throttled-rate", "100K", "--retries", "10",
@@ -48,7 +45,7 @@ def downloads_dir():
 def video_owner(client, video_id):
     channels = client.channels().list(part="id", mine=True).execute()["items"]
     if not channels:
-        sys.exit("Tu cuenta de Google no tiene canal de YouTube: crea uno en youtube.com y reintenta.")
+        sys.exit(t("no_channel"))
     mine = channels[0]["id"]
     items = client.videos().list(part="snippet", id=video_id).execute()["items"]
     if not items:
@@ -133,8 +130,8 @@ def wait_for_processing(client, video_id, report, sleep=time.sleep):
         if status == "succeeded":
             return
         if status != "processing":
-            sys.exit(f"YouTube no pudo procesar el video {video_id} ({status})")
-        report(f"Procesando en YouTube ({status})")
+            sys.exit(t("processing_failed", video_id=video_id, status=status))
+        report(t("processing", status=status))
         sleep(PROCESSING_POLL)
 
 
@@ -144,16 +141,12 @@ def wait_for_claims(video_id, report, sleep=time.sleep, clock=time.monotonic):
     while True:
         session, entries = tracklist.try_claims(video_id)
         if session is None:
-            sys.exit(
-                "Studio no deja leer las reclamaciones de tu video: entra en studio.youtube.com con la "
-                "misma cuenta con la que subiste (o cambia de navegador con --browser) y vuelve a "
-                f"lanzar el mismo comando (el video ya esta subido: https://youtu.be/{video_id})"
-            )
+            sys.exit(t("claims_unreadable", video_id=video_id))
         counts.append(len(entries))
         elapsed = clock() - began
-        report(f"Reclamaciones: {len(entries)} ({tracklist.hhmmss(int(elapsed))})")
+        report(t("claims_count", count=len(entries), elapsed=tracklist.hhmmss(int(elapsed))))
         if elapsed >= CLAIMS_TIMEOUT:
-            report("Content ID sigue trabajando: vuelve a lanzar el mismo comando mas tarde")
+            report(t("content_id_busy"))
             return
         if claims_settled(counts, elapsed):
             return
@@ -219,22 +212,21 @@ def find_client_secret(directory, since):
 def setup_credentials(open_url=webbrowser.open, ask=input, report=print_stderr,
                       downloads=Path.home() / "Downloads", clock=time.time):
     started = clock()
-    report("tracklist sube los videos a tu canal con tu propio proyecto de Google "
-           "(gratis, una sola vez, ~5 minutos).")
-    ask("Pulsa Enter para seguir")
+    report(t("wizard_intro"))
+    ask(t("press_enter"))
     for number, (url, instruction) in enumerate(CONSOLE_STEPS, 1):
-        report(f"Paso {number}/{len(CONSOLE_STEPS)}: {instruction}\n  {url}")
+        report(t("wizard_step", number=number, total=len(CONSOLE_STEPS), instruction=t(instruction), url=url))
         open_url(url)
-        ask("Pulsa Enter para seguir")
+        ask(t("press_enter"))
     while True:
-        answer = ask("Pulsa Enter cuando lo hayas descargado, o pega la ruta del JSON: ")
+        answer = ask(t("ask_client_secret"))
         if answer.strip():
             found = Path(answer.strip().strip("'\"")).expanduser()
         else:
             found = find_client_secret(downloads, started)
         if found and found.exists() and valid_client_secret(found):
             break
-        report("Ese fichero no es un ID de cliente de 'App de escritorio'. Prueba otra vez.")
+        report(t("not_desktop_client"))
     CLIENT_SECRET.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(found, CLIENT_SECRET)
     CLIENT_SECRET.chmod(0o600)
@@ -248,20 +240,13 @@ def youtube_client():
         from google_auth_oauthlib.flow import InstalledAppFlow
         from googleapiclient.discovery import build
     except ImportError:
-        sys.exit(
-            "Faltan dependencias para subir audio.\n"
-            f"{t('reinstall')}"
-        )
+        sys.exit(f"{t('upload_deps_missing')}\n{t('reinstall')}")
     if not CLIENT_SECRET.exists():
         if sys.stdin.isatty() and sys.stderr.isatty():
             setup_credentials()
         else:
-            steps = "\n".join(f"  {n}. {url} > {text}" for n, (url, text) in enumerate(CONSOLE_STEPS, 1))
-            sys.exit(
-                "Falta la credencial de YouTube. Una sola vez:\n"
-                f"{steps}\n"
-                f"  6. Guarda el JSON como {CLIENT_SECRET}"
-            )
+            steps = "\n".join(f"  {n}. {url} > {t(key)}" for n, (url, key) in enumerate(CONSOLE_STEPS, 1))
+            sys.exit(t("credential_missing", steps=steps, path=CLIENT_SECRET))
     credentials = None
     if TOKEN_FILE.exists():
         credentials = Credentials.from_authorized_user_file(str(TOKEN_FILE))
@@ -302,16 +287,16 @@ def prepare(path, report, title=None, on_uploaded=None):
     client = youtube_client()
     video_id = known_upload(path)
     if video_id:
-        report(f"Ya subido como https://youtu.be/{video_id}")
+        report(t("already_uploaded", video_id=video_id))
     else:
         with tempfile.TemporaryDirectory() as tmp:
             video = Path(tmp) / f"{path.stem}.mp4"
-            report("Convirtiendo a video")
+            report(t("converting"))
             convert_to_video(path, video)
-            report("Subiendo a YouTube")
+            report(t("uploading"))
             video_id = upload_video(client, video, title or path.stem)
         remember_upload(path, video_id)
-        report(f"Subido como https://youtu.be/{video_id}")
+        report(t("uploaded", video_id=video_id))
     if on_uploaded:
         on_uploaded(video_id)
     wait_for_processing(client, video_id, report)
@@ -323,25 +308,25 @@ def adopt(video_id, report):
     try:
         client = youtube_client()
     except SystemExit as error:
-        report(f"{error}\nSigo solo con Shazam")
+        report(f"{error}\n{t('shazam_only')}")
         return video_id, None, None
     from googleapiclient.errors import HttpError
 
     try:
         mine, title = video_owner(client, video_id)
     except (SystemExit, HttpError) as error:
-        report(f"{error}\nSigo solo con Shazam")
+        report(f"{error}\n{t('shazam_only')}")
         return video_id, None, None
     if mine:
         return video_id, None, None
     audio = download_foreign(video_id)
     if audio is None:
-        report("No se pudo descargar el video: sigo solo con Shazam")
+        report(t("download_failed_shazam"))
         return video_id, None, title
     try:
         uploaded = prepare(audio, report, title, lambda copy: remember(remote_key(video_id), copy))
     except QuotaExceeded:
-        report("Cuota de subidas de YouTube agotada: sigo solo con Shazam")
+        report(t("quota_shazam"))
         return video_id, None, title
     return uploaded, audio, title
 
@@ -355,14 +340,14 @@ def offer_delete(video_id):
         return
     if video_id not in load_uploads().values():
         return
-    print(f"¿Borrar el video de YouTube {video_id}? [s/N] ", end="", file=sys.stderr, flush=True)
+    print(t("ask_delete", video_id=video_id), end="", file=sys.stderr, flush=True)
     try:
         answer = input().strip().lower()
     except EOFError:
         print(file=sys.stderr)
         return
-    if answer != "s":
+    if answer != t("yes"):
         return
     delete_video(youtube_client(), video_id)
     forget_upload(video_id)
-    print("Video borrado.", file=sys.stderr)
+    print(t("deleted"), file=sys.stderr)

@@ -1213,7 +1213,7 @@ class NoChannelTest(unittest.TestCase):
         client = NoChannelClient("UCme", [])
         with self.assertRaises(SystemExit) as raised:
             upload.video_owner(client, "vid12345678")
-        self.assertIn("no tiene canal", str(raised.exception))
+        self.assertIn("has no YouTube channel", str(raised.exception))
 
 
 class DownloadForeignTest(IsolatedCache, unittest.TestCase):
@@ -1317,13 +1317,13 @@ class WaitForClaimsTest(unittest.TestCase):
         with self.assertRaises(SystemExit) as stop:
             self.wait([0], session=False)
         self.assertIn("studio.youtube.com", str(stop.exception.code))
-        self.assertIn("misma cuenta", str(stop.exception.code))
+        self.assertIn("same account", str(stop.exception.code))
 
     def test_giving_up_tells_the_user_to_retry_later(self):
         polls = upload.CLAIMS_TIMEOUT // upload.CLAIMS_POLL + 1
         time, messages = self.wait([0] * polls)
         self.assertEqual(time.now, upload.CLAIMS_TIMEOUT)
-        self.assertIn("mas tarde", messages[-1])
+        self.assertIn("again later", messages[-1])
 
 
 class WaitForProcessingTest(unittest.TestCase):
@@ -1523,7 +1523,7 @@ class AdoptTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
     def test_without_a_google_login_it_keeps_working_with_shazam_alone(self):
         self.client_error = SystemExit("Falta la credencial")
         self.assertEqual(self.adopt(), ("orig1234567", None, None))
-        self.assertTrue(any("solo con Shazam" in message for message in self.messages))
+        self.assertTrue(any("Shazam only" in message for message in self.messages))
 
     def test_an_account_without_a_channel_keeps_working_with_shazam_alone(self):
         def no_channel(client, video_id):
@@ -1531,7 +1531,7 @@ class AdoptTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
 
         upload.video_owner = no_channel
         self.assertEqual(self.adopt(), ("orig1234567", None, None))
-        self.assertTrue(any("solo con Shazam" in message for message in self.messages))
+        self.assertTrue(any("Shazam only" in message for message in self.messages))
 
     def test_an_api_error_while_checking_ownership_falls_back_to_shazam(self):
         from googleapiclient.errors import HttpError
@@ -1541,7 +1541,7 @@ class AdoptTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
 
         upload.video_owner = failing
         self.assertEqual(self.adopt(), ("orig1234567", None, None))
-        self.assertTrue(any("solo con Shazam" in message for message in self.messages))
+        self.assertTrue(any("Shazam only" in message for message in self.messages))
 
     def test_an_interrupted_wait_already_remembers_which_copy_belongs_to_the_original(self):
         def interrupted(video_id, report):
@@ -1555,12 +1555,12 @@ class AdoptTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
     def test_a_video_that_cannot_be_downloaded_falls_back_to_shazam(self):
         upload.download_foreign = lambda video_id: None
         self.assertEqual(self.adopt(), ("orig1234567", None, "Set ajeno"))
-        self.assertIn("No se pudo descargar el video: sigo solo con Shazam", self.messages)
+        self.assertIn("Could not download the video: continuing with Shazam only", self.messages)
 
     def test_an_exhausted_quota_falls_back_to_shazam_instead_of_stopping(self):
         self.quota_error = True
         self.assertEqual(self.adopt(), ("orig1234567", None, "Set ajeno"))
-        self.assertIn("Cuota de subidas de YouTube agotada: sigo solo con Shazam", self.messages)
+        self.assertIn("YouTube upload quota used up: continuing with Shazam only", self.messages)
 
     def test_deleting_the_uploaded_copy_also_deletes_the_download(self):
         video_id, audio, title = self.adopt()
@@ -1745,7 +1745,7 @@ class OfferDeleteTest(IsolatedUploads, unittest.TestCase):
         return asked
 
     def test_a_video_tracklist_did_not_upload_is_never_offered_for_deletion(self):
-        asked = self.offer("otro1234567", answer="s")
+        asked = self.offer("otro1234567", answer="y")
         asked.assert_not_called()
         self.assertEqual(self.deleted, [])
 
@@ -1755,12 +1755,21 @@ class OfferDeleteTest(IsolatedUploads, unittest.TestCase):
         self.assertEqual(upload.known_upload(self.source), "dnS4s0gar-4")
 
     def test_confirming_deletes_the_video_and_forgets_the_upload(self):
-        self.offer("dnS4s0gar-4", answer="s")
+        self.offer("dnS4s0gar-4", answer="y")
         self.assertEqual(self.deleted, ["dnS4s0gar-4"])
         self.assertIsNone(upload.known_upload(self.source))
 
+    def test_spanish_confirms_with_s_for_si(self):
+        with mock.patch.object(messages, "LANGUAGE", "es"):
+            self.offer("dnS4s0gar-4", answer="s")
+        self.assertEqual(self.deleted, ["dnS4s0gar-4"])
+
+    def test_s_does_not_delete_in_english_because_it_is_not_yes_there(self):
+        self.offer("dnS4s0gar-4", answer="s")
+        self.assertEqual(self.deleted, [])
+
     def test_without_a_terminal_it_never_asks(self):
-        asked = self.offer("dnS4s0gar-4", answer="s", tty=False)
+        asked = self.offer("dnS4s0gar-4", answer="y", tty=False)
         asked.assert_not_called()
         self.assertEqual(self.deleted, [])
 
@@ -1897,13 +1906,13 @@ class SetupCredentialsTest(unittest.TestCase):
         fresh = self.write_secret(self.root / "fresh.json")
         self.run_wizard([""] * 7 + [str(fresh)])
         self.assertTrue(upload.CLIENT_SECRET.exists())
-        self.assertEqual(len([m for m in self.reported if m.startswith("Ese fichero")]), 1)
+        self.assertEqual(len([m for m in self.reported if m.startswith("That file")]), 1)
 
     def test_a_json_that_is_not_a_desktop_client_is_rejected(self):
         web = self.write_secret(self.root / "web.json", {"web": {"client_id": "x"}})
         good = self.write_secret(self.root / "good.json")
         self.run_wizard([""] * 6 + [str(web), str(good)])
-        self.assertTrue(any("App de escritorio" in m for m in self.reported))
+        self.assertTrue(any("Desktop app" in m for m in self.reported))
         self.assertEqual(json.loads(upload.CLIENT_SECRET.read_text()), self.DESKTOP)
 
     def test_a_dragged_path_with_quotes_is_accepted(self):
@@ -1916,6 +1925,13 @@ class SetupCredentialsTest(unittest.TestCase):
         self.run_wizard([""] * 6 + [str(good)])
         self.assertEqual(self.opened, upload.CONSOLE_URLS)
         self.assertEqual(len(self.opened), 5)
+
+    def test_spanish_steps_also_name_the_english_button_since_the_console_follows_the_google_account(self):
+        good = self.write_secret(self.root / "client_secret.json")
+        with mock.patch.object(messages, "LANGUAGE", "es"):
+            self.run_wizard([""] * 6 + [str(good)])
+        self.assertTrue(any("'App de escritorio' (Desktop app)" in m for m in self.reported))
+        self.assertTrue(any(m.startswith("Paso 1/5") for m in self.reported))
 
 
 class MissingToolsTest(unittest.TestCase):
