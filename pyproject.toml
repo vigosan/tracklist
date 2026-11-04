@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "tracklist"
 version = "0.1.0"
-description = "Genera un tracklist con timestamps a partir de las reclamaciones de Content ID de YouTube"
+description = "Timestamped tracklists for YouTube videos from Content ID claims, with Shazam for the gaps"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [

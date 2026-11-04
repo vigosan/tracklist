@@ -11,7 +11,7 @@ https://www.youtube.com/watch?v=XXXXXXXXXXX
   - 09:30 ????? (unidentified, until 12:05)
   - 12:05 Artist Three - Third Track
 
-3 identified, 1 suggested, 1 gaps (02:35 unidentified of 15:40)
+2 identified, 1 suggested, 1 gaps (02:35 unidentified of 15:40)
 ```
 
 ## How it works
@@ -64,9 +64,19 @@ While it runs, a terminal UI shows the tracklist as it grows:
 | `p` | pause / resume Shazam |
 | `r` | refresh Content ID claims |
 | `n` | analyse another video |
-| `x` | discard Shazam suggestions and start over (confirm with `s`) |
+| `x` | discard Shazam suggestions and start over (confirm with `y`) |
 | `c` | copy the tracklist |
 | `q` | quit |
+
+## Language
+
+tracklist speaks English or Spanish, following your system's locale (`LC_ALL`, `LC_MESSAGES`, then `LANG`). A locale starting with `es` gets Spanish, any other gets English. To switch for one run:
+
+```bash
+LC_ALL=es_ES.UTF-8 tracklist <URL>
+```
+
+In Spanish, yes/no questions and the TUI's confirm key use `s` instead of `y`.
 
 ## Limits
 
