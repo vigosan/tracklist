@@ -145,14 +145,18 @@ def installed_browsers(app_dirs):
 
 
 def pick_browser(candidates, read_cookies):
+    denied = False
     for browser in candidates:
         try:
             cookies = read_cookies(browser)
-        except SystemExit:
+        except SystemExit as error:
+            denied = denied or error.code == t("safari_disk_access")
             continue
         if "SAPISID" in cookies:
             return browser
-    return None
+    if denied:
+        sys.exit(f"{t('no_browser_session')}\n{t('safari_disk_access')}")
+    sys.exit(t("no_browser_session"))
 
 
 def load_config():
@@ -174,8 +178,6 @@ def current_browser():
     if saved:
         return saved
     browser = pick_browser(installed_browsers(APP_DIRS), browser_cookies)
-    if browser is None:
-        sys.exit(t("no_browser_session"))
     save_browser(browser)
     return browser
 

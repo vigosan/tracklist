@@ -981,6 +981,18 @@ class BrowserTest(unittest.TestCase):
             tracklist.current_browser()
         self.assertIn("studio.youtube.com", str(raised.exception.code))
 
+    def test_safari_blocked_by_permissions_is_named_so_a_safari_user_is_not_told_to_sign_in(self):
+        def read(browser):
+            if browser == "safari":
+                raise SystemExit(tracklist.t("safari_disk_access"))
+            return {}
+
+        with self.assertRaises(SystemExit) as raised:
+            tracklist.pick_browser(["chrome", "safari"], read)
+        self.assertIn("studio.youtube.com", str(raised.exception.code))
+        self.assertIn("Full Disk Access", str(raised.exception.code))
+        self.assertIn("Your terminal app (Terminal, iTerm, Ghostty...)", str(raised.exception.code))
+
     def test_browser_flag_replaces_the_saved_choice(self):
         tracklist.CONFIG_FILE.parent.mkdir(parents=True)
         tracklist.CONFIG_FILE.write_text(json.dumps({"browser": "brave", "otra": 1}))
