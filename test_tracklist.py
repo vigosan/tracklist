@@ -484,42 +484,42 @@ class StatusTextTest(unittest.TestCase):
         state = {**STATE, "phase": "done", "paused": False}
         self.assertEqual(
             recognize_tui.status_text(state, recognize_tui.status_fields(state, 102.0)),
-            "Completado - 8 sugerencias",
+            "Done - 8 suggestions",
         )
 
     def test_finished_run_with_no_suggestions_says_so(self):
         state = {**STATE, "phase": "done", "paused": False, "suggestions": 0}
         self.assertEqual(
             recognize_tui.status_text(state, recognize_tui.status_fields(state, 102.0)),
-            "Completado - sin sugerencias",
+            "Done - no suggestions",
         )
 
     def test_a_single_suggestion_is_not_pluralised(self):
         state = {**STATE, "phase": "done", "paused": False, "suggestions": 1}
         self.assertEqual(
             recognize_tui.status_text(state, recognize_tui.status_fields(state, 102.0)),
-            "Completado - 1 sugerencia",
+            "Done - 1 suggestion",
         )
 
     def test_pause_takes_precedence_over_everything(self):
         state = {**STATE, "phase": "done", "paused": True}
         self.assertEqual(
             recognize_tui.status_text(state, recognize_tui.status_fields(state, 102.0)),
-            "PAUSA",
+            "PAUSED",
         )
 
     def test_running_state_still_reports_the_current_sample(self):
         state = {**STATE, "phase": "recognizing", "paused": False}
         self.assertEqual(
             recognize_tui.status_text(state, recognize_tui.status_fields(state, 102.0)),
-            "Muestra 7/12",
+            "Sample 7/12",
         )
 
     def test_loading_phases_keep_their_label(self):
         state = {**STATE, "phase": "claims", "paused": False}
         self.assertEqual(
             recognize_tui.status_text(state, recognize_tui.status_fields(state, 102.0)),
-            "Pidiendo reclamaciones a Studio...",
+            "Asking Studio for claims...",
         )
 
     def test_backoff_is_reported_while_running(self):
@@ -528,6 +528,17 @@ class StatusTextTest(unittest.TestCase):
             recognize_tui.status_text(state, recognize_tui.status_fields(state, 102.0)),
             "rate limit - backoff 3s",
         )
+
+
+class SpanishStatusTest(unittest.TestCase):
+    def test_a_spanish_system_gets_the_status_in_spanish(self):
+        state = {**STATE, "phase": "done", "paused": False}
+        with mock.patch.object(messages, "LANGUAGE", "es"):
+            self.assertEqual(
+                recognize_tui.status_text(state, recognize_tui.status_fields(state, 102.0)),
+                "Completado - 8 sugerencias",
+            )
+            self.assertEqual(recognize_tui.phase_label("claims"), "Pidiendo reclamaciones a Studio...")
 
 
 class FinishedProgressTest(unittest.TestCase):
@@ -550,9 +561,9 @@ class FinishedElapsedTest(unittest.TestCase):
 
 class PhaseAndStateTest(unittest.TestCase):
     def test_phase_labels(self):
-        self.assertEqual(recognize_tui.phase_label("cookies"), "Leyendo cookies del navegador...")
-        self.assertEqual(recognize_tui.phase_label("claims"), "Pidiendo reclamaciones a Studio...")
-        self.assertEqual(recognize_tui.phase_label("video"), "Pidiendo datos del video...")
+        self.assertEqual(recognize_tui.phase_label("cookies"), "Reading browser cookies...")
+        self.assertEqual(recognize_tui.phase_label("claims"), "Asking Studio for claims...")
+        self.assertEqual(recognize_tui.phase_label("video"), "Fetching video details...")
         self.assertEqual(recognize_tui.phase_label("recognizing"), "")
         self.assertEqual(recognize_tui.phase_label("cualquier-otra"), "")
 
@@ -870,7 +881,7 @@ class BrowserTest(unittest.TestCase):
 
 class ScanPhaseLabelTest(unittest.TestCase):
     def test_the_probe_phase_explains_it_is_reading_the_video(self):
-        self.assertEqual(recognize_tui.phase_label("probe"), "Leyendo duracion del video...")
+        self.assertEqual(recognize_tui.phase_label("probe"), "Reading video length...")
 
 
 class ScanGapsTest(unittest.TestCase):
@@ -1611,8 +1622,27 @@ class RefreshKeyTest(unittest.TestCase):
         self.assertEqual(gaps, [(300, 600)])
 
 
+class ConfirmKeyTest(unittest.TestCase):
+    def bindings(self):
+        from textual.app import App
+
+        seen = []
+        with mock.patch.object(App, "run", lambda app, *args, **kwargs: seen.append(app)):
+            recognize_tui.run_app("dnS4s0gar-4", 600, False)
+        return {action: (key, description) for key, action, description in seen[0].BINDINGS}
+
+    def test_english_confirms_with_y_to_match_the_yes_it_asks_for(self):
+        self.assertEqual(self.bindings()["confirm"], ("y", "Confirm"))
+        self.assertEqual(self.bindings()["pause"], ("p", "Pause"))
+
+    def test_spanish_confirms_with_s_for_si(self):
+        with mock.patch.object(messages, "LANGUAGE", "es"):
+            self.assertEqual(self.bindings()["confirm"], ("s", "Confirmar"))
+            self.assertEqual(self.bindings()["pause"], ("p", "Pausa"))
+
+
 class TypedUrlHintTest(unittest.TestCase):
-    HINT = "[!] si el video no es tuyo, sal y lanza 'tracklist <url>' para subirlo y leer Content ID"
+    HINT = "[!] if the video is not yours, quit and run 'tracklist <url>' to upload it and read Content ID"
 
     def log_after_loading(self, typed_id):
         from textual.app import App
