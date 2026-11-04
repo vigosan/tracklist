@@ -766,6 +766,17 @@ class ArgumentsTest(unittest.TestCase):
         with mock.patch.object(messages, "LANGUAGE", "es"):
             self.assertIn("URL o ID del video, o fichero de audio", tracklist.build_parser().format_help())
 
+    def test_help_says_it_takes_my_videos_other_peoples_and_local_files(self):
+        description = " ".join(tracklist.build_parser().format_help().split())
+        self.assertIn("your own channel", description)
+        self.assertIn("someone else's video", description)
+        self.assertIn("a local audio file", description)
+        with mock.patch.object(messages, "LANGUAGE", "es"):
+            description = " ".join(tracklist.build_parser().format_help().split())
+        self.assertIn("tu canal", description)
+        self.assertIn("un video ajeno", description)
+        self.assertIn("un fichero de audio", description)
+
     def test_the_mode_is_detected_instead_of_being_asked_for(self):
         parser = tracklist.build_parser()
         with self.assertRaises(SystemExit):
