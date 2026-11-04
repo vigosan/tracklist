@@ -1,0 +1,6 @@
+a.txt
+.venv/
+__pycache__/
+docs/
+sample.json
+.DS_Store
