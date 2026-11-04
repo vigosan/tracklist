@@ -1262,5 +1262,44 @@ class MergeAcrossRecognitionGapTest(unittest.TestCase):
         merged = tracklist.merge_samples([(15, match), (600, match)])
         self.assertEqual(len(merged), 2)
 
+
+class FoldSuggestionsIntoClaimsTest(unittest.TestCase):
+    def claim(self, start, duration, artist, title):
+        return {"artist": artist, "title": title, "label": "",
+                "start": start, "duration": duration}
+
+    def suggest(self, start, artist, title):
+        return {"artist": artist, "title": title, "label": "",
+                "start": start, "duration": 10, "suggested": True}
+
+    def test_a_restated_track_just_after_a_claim_is_absorbed(self):
+        claimed = [self.claim(172, 95, "Kay Cee", "Millenium Stringz (Radio Edit)")]
+        suggestion = self.suggest(277, "Kay Cee", "Millenium Stringz (Radio Edit)")
+        self.assertEqual(tracklist.drop_claimed(claimed, [suggestion]), [])
+
+    def test_a_claim_grows_to_cover_the_suggestion_it_absorbs(self):
+        claimed = [self.claim(172, 95, "Kay Cee", "Millenium Stringz (Radio Edit)")]
+        tracklist.drop_claimed(claimed, [self.suggest(277, "Kay Cee", "Millenium Stringz (Radio Edit)")])
+        self.assertEqual(claimed[0]["start"], 172)
+        self.assertEqual(claimed[0]["duration"], 115)
+
+    def test_a_suggestion_just_before_a_claim_hands_over_its_earlier_start(self):
+        claimed = [self.claim(468, 190, "Signum", "Coming On Strong (Extended Mix)")]
+        suggestion = self.suggest(457, "Signum", "Coming On Strong")
+        self.assertEqual(tracklist.drop_claimed(claimed, [suggestion]), [])
+        self.assertEqual(claimed[0]["start"], 457)
+        self.assertEqual(claimed[0]["title"], "Coming On Strong (Extended Mix)")
+
+    def test_a_different_track_near_a_claim_is_left_alone(self):
+        claimed = [self.claim(172, 95, "Kay Cee", "Millenium Stringz")]
+        suggestion = self.suggest(277, "Transa", "Supernova")
+        self.assertEqual(tracklist.drop_claimed(claimed, [suggestion]), [suggestion])
+
+    def test_the_same_track_far_from_a_claim_is_a_genuine_replay(self):
+        claimed = [self.claim(172, 95, "Kay Cee", "Millenium Stringz")]
+        suggestion = self.suggest(900, "Kay Cee", "Millenium Stringz")
+        self.assertEqual(tracklist.drop_claimed(claimed, [suggestion]), [suggestion])
+
+
 if __name__ == "__main__":
     unittest.main()

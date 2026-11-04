@@ -359,15 +359,39 @@ def same_track(one, other):
     )
 
 
+def overlaps(entry, suggestion):
+    return (
+        suggestion["start"] < entry["start"] + entry["duration"]
+        and entry["start"] < suggestion["start"] + suggestion["duration"]
+    )
+
+
+def absorbs(entry, suggestion):
+    if not same_track(entry, suggestion):
+        return False
+    return (
+        within_merge_window(entry, suggestion["start"])
+        and within_merge_window(suggestion, entry["start"])
+    )
+
+
+def stretch(entry, suggestion):
+    end = max(entry["start"] + entry["duration"], suggestion["start"] + suggestion["duration"])
+    entry["start"] = min(entry["start"], suggestion["start"])
+    entry["duration"] = end - entry["start"]
+
+
 def drop_claimed(claimed, suggestions):
-    return [
-        suggestion for suggestion in suggestions
-        if not any(
-            suggestion["start"] < entry["start"] + entry["duration"]
-            and entry["start"] < suggestion["start"] + suggestion["duration"]
-            for entry in claimed
-        )
-    ]
+    kept = []
+    for suggestion in suggestions:
+        absorbed = next((entry for entry in claimed if absorbs(entry, suggestion)), None)
+        if absorbed:
+            stretch(absorbed, suggestion)
+            continue
+        if any(overlaps(entry, suggestion) for entry in claimed):
+            continue
+        kept.append(suggestion)
+    return kept
 
 
 def within_merge_window(entry, start):
