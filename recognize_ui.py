@@ -2,47 +2,47 @@ import subprocess
 import sys
 
 import tracklist
+from messages import t
 
 
 def pentest_line(event):
     kind = event[0]
     if kind == "gap":
         _, index, total, start, end = event
-        return f"[*] hueco {index}/{total} ({tracklist.hhmmss(start)}-{tracklist.hhmmss(end)})"
+        return t("log_gap", index=index, total=total, start=tracklist.hhmmss(start), end=tracklist.hhmmss(end))
     if kind == "sample":
         _, offset, match = event
         if match is None:
-            return f"[-] {tracklist.hhmmss(offset)} sin match"
+            return t("log_no_match", offset=tracklist.hhmmss(offset))
         return f"[+] {tracklist.hhmmss(offset)} {match['artist']} - {match['title']}"
     if kind == "claims":
         count = event[1]
         if not count:
-            return "[*] sin reclamaciones: se analiza el video entero con Shazam"
-        noun = "reclamacion" if count == 1 else "reclamaciones"
-        return f"[*] {count} {noun} de Content ID"
+            return t("log_no_claims")
+        return t("log_claim" if count == 1 else "log_claims", count=count)
     if kind == "download":
         stage = event[1]
         if stage == "start":
-            return "[*] descargando audio..."
+            return t("log_download_start")
         if stage == "cached":
-            return "[*] audio ya descargado"
-        return "[*] audio descargado"
+            return t("log_download_cached")
+        return t("log_download_done")
     if kind == "cached":
         _, done, total = event
-        return f"[*] {done}/{total} muestras ya analizadas, faltan {total - done}"
+        return t("log_cached", done=done, total=total, left=total - done)
     if kind == "resolved":
-        return f"[*] {tracklist.hhmmss(event[1])} recuperado tras el backoff"
+        return t("log_resolved", offset=tracklist.hhmmss(event[1]))
     if kind == "workers":
         count = event[1]
         if count == 1:
-            return "[!] bajando a 1 peticion simultanea"
-        return f"[*] subiendo a {count} peticiones simultaneas"
+            return t("log_workers_down")
+        return t("log_workers_up", count=count)
     if kind == "backoff":
         _, seconds, attempt = event
-        return f"[!] rate limit - esperando {seconds}s (intento {attempt}/{tracklist.BACKOFF_RETRIES})"
+        return t("log_backoff", seconds=seconds, attempt=attempt, retries=tracklist.BACKOFF_RETRIES)
     if kind == "done":
         _, count, seconds = event
-        return f"[*] {count} sugerencias en {tracklist.hhmmss(seconds)}"
+        return t("log_done", count=count, elapsed=tracklist.hhmmss(seconds))
     return None
 
 
@@ -56,7 +56,7 @@ def entry_line(entry):
 
 
 def gap_line(start, end):
-    return f"[dim]  - {tracklist.hhmmss(start)} ????? (sin identificar, hasta {tracklist.hhmmss(end)})[/dim]"
+    return f"[dim]  - {tracklist.hhmmss(start)} {t('render_gap', end=tracklist.hhmmss(end))}[/dim]"
 
 
 def gap_residuals(start, end, suggestions):
@@ -71,9 +71,9 @@ def tui_rows(entries, gaps, completed, active):
             rows += [(rs, gap_line(rs, re)) for rs, re in gap_residuals(start, end, completed[index])]
         elif active is not None and index == active["index"]:
             if active["sample"] == 0:
-                status = "descargando"
+                status = t("row_downloading")
             else:
-                status = f"buscando (muestra {active['sample']}/{active['total']})"
+                status = t("row_searching", sample=active["sample"], total=active["total"])
             if active["backoff"]:
                 status += f" - backoff {active['backoff']}s"
             rows.append((start, f"[cyan]  - {tracklist.hhmmss(start)} {status}...[/cyan]"))
@@ -96,7 +96,7 @@ def textual_available():
         import textual  # noqa: F401
     except ImportError:
         print(
-            f"Aviso: TUI desactivado (falta textual).\n{tracklist.REINSTALL}",
+            f"{t('tui_missing')}\n{tracklist.REINSTALL}",
             file=sys.stderr,
         )
         return False
@@ -106,16 +106,16 @@ def textual_available():
 def offer_clipboard(text):
     if not (sys.stdin.isatty() and sys.stderr.isatty()):
         return
-    print("¿Copiar al portapapeles? [S/n] ", end="", file=sys.stderr, flush=True)
+    print(t("ask_clipboard"), end="", file=sys.stderr, flush=True)
     try:
         answer = input().strip().lower()
     except EOFError:
         print(file=sys.stderr)
         return
-    if answer not in ("", "s"):
+    if answer not in ("", t("yes")):
         return
     try:
         subprocess.run(["pbcopy"], input=text.encode(), check=True)
-        print("Copiado.", file=sys.stderr)
+        print(t("copied"), file=sys.stderr)
     except (OSError, subprocess.CalledProcessError):
-        print("Aviso: no se pudo copiar al portapapeles", file=sys.stderr)
+        print(t("copy_failed"), file=sys.stderr)

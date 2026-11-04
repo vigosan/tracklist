@@ -272,35 +272,35 @@ class LanguageTest(unittest.TestCase):
 
 class PentestLineTest(unittest.TestCase):
     def test_formats_each_event_kind(self):
-        self.assertEqual(recognize_ui.pentest_line(("gap", 1, 7, 0, 242)), "[*] hueco 1/7 (00:00-04:02)")
+        self.assertEqual(recognize_ui.pentest_line(("gap", 1, 7, 0, 242)), "[*] gap 1/7 (00:00-04:02)")
         self.assertEqual(
             recognize_ui.pentest_line(("sample", 75, {"artist": "Duran Duran", "title": "Too Late Marlene"})),
             "[+] 01:15 Duran Duran - Too Late Marlene",
         )
-        self.assertEqual(recognize_ui.pentest_line(("sample", 135, None)), "[-] 02:15 sin match")
+        self.assertEqual(recognize_ui.pentest_line(("sample", 135, None)), "[-] 02:15 no match")
         self.assertEqual(
             recognize_ui.pentest_line(("backoff", 3, 1)),
-            "[!] rate limit - esperando 3s (intento 1/4)",
+            "[!] rate limit - waiting 3s (attempt 1/4)",
         )
-        self.assertEqual(recognize_ui.pentest_line(("done", 8, 552)), "[*] 8 sugerencias en 09:12")
+        self.assertEqual(recognize_ui.pentest_line(("done", 8, 552)), "[*] 8 suggestions in 09:12")
 
 
 class BackoffCountdownTest(unittest.TestCase):
     def test_the_log_says_how_long_it_waits_and_which_attempt(self):
         self.assertEqual(
             recognize_ui.pentest_line(("backoff", 12, 3)),
-            "[!] rate limit - esperando 12s (intento 3/4)",
+            "[!] rate limit - waiting 12s (attempt 3/4)",
         )
 
     def test_the_active_row_counts_the_wait_down(self):
         active = {"index": 0, "sample": 2, "total": 4, "matches": [], "backoff": 8}
         rows = recognize_ui.tui_rows([ENTRY], GAPS, {}, active)
-        self.assertEqual(rows[1], "[cyan]  - 01:00 buscando (muestra 2/4) - backoff 8s...[/cyan]")
+        self.assertEqual(rows[1], "[cyan]  - 01:00 searching (sample 2/4) - backoff 8s...[/cyan]")
 
     def test_a_row_not_waiting_shows_no_backoff(self):
         active = {"index": 0, "sample": 2, "total": 4, "matches": [], "backoff": 0}
         rows = recognize_ui.tui_rows([ENTRY], GAPS, {}, active)
-        self.assertEqual(rows[1], "[cyan]  - 01:00 buscando (muestra 2/4)...[/cyan]")
+        self.assertEqual(rows[1], "[cyan]  - 01:00 searching (sample 2/4)...[/cyan]")
 
     def test_the_status_panel_counts_the_wait_down(self):
         state = {**STATE, "phase": "recognizing", "paused": False, "backoff_until": 112.0}
@@ -315,43 +315,75 @@ class BackoffCountdownTest(unittest.TestCase):
 
 class LimiterLogTest(unittest.TestCase):
     def test_it_reports_when_concurrency_drops(self):
-        self.assertEqual(recognize_ui.pentest_line(("workers", 1)), "[!] bajando a 1 peticion simultanea")
+        self.assertEqual(recognize_ui.pentest_line(("workers", 1)), "[!] dropping to 1 concurrent request")
 
     def test_it_reports_when_concurrency_recovers(self):
-        self.assertEqual(recognize_ui.pentest_line(("workers", 3)), "[*] subiendo a 3 peticiones simultaneas")
+        self.assertEqual(recognize_ui.pentest_line(("workers", 3)), "[*] raising to 3 concurrent requests")
 
 
 class VerboseLogTest(unittest.TestCase):
     def test_it_says_how_many_claims_studio_returned(self):
-        self.assertEqual(recognize_ui.pentest_line(("claims", 18)), "[*] 18 reclamaciones de Content ID")
+        self.assertEqual(recognize_ui.pentest_line(("claims", 18)), "[*] 18 Content ID claims")
 
     def test_a_single_claim_is_not_pluralised(self):
-        self.assertEqual(recognize_ui.pentest_line(("claims", 1)), "[*] 1 reclamacion de Content ID")
+        self.assertEqual(recognize_ui.pentest_line(("claims", 1)), "[*] 1 Content ID claim")
 
     def test_it_says_when_the_video_is_not_claimed(self):
         self.assertEqual(
             recognize_ui.pentest_line(("claims", 0)),
-            "[*] sin reclamaciones: se analiza el video entero con Shazam",
+            "[*] no claims: scanning the whole video with Shazam",
         )
 
     def test_it_announces_the_download_and_its_end(self):
-        self.assertEqual(recognize_ui.pentest_line(("download", "start")), "[*] descargando audio...")
-        self.assertEqual(recognize_ui.pentest_line(("download", "done")), "[*] audio descargado")
+        self.assertEqual(recognize_ui.pentest_line(("download", "start")), "[*] downloading audio...")
+        self.assertEqual(recognize_ui.pentest_line(("download", "done")), "[*] audio downloaded")
 
     def test_it_says_when_the_audio_was_already_on_disk(self):
-        self.assertEqual(recognize_ui.pentest_line(("download", "cached")), "[*] audio ya descargado")
+        self.assertEqual(recognize_ui.pentest_line(("download", "cached")), "[*] audio already downloaded")
 
     def test_it_reports_how_much_is_reused_on_resume(self):
         self.assertEqual(
             recognize_ui.pentest_line(("cached", 19, 54)),
-            "[*] 19/54 muestras ya analizadas, faltan 35",
+            "[*] 19/54 samples already analysed, 35 to go",
         )
 
     def test_a_recovered_backoff_is_reported_so_the_warning_is_not_left_hanging(self):
-        self.assertEqual(recognize_ui.pentest_line(("resolved", 795)), "[*] 13:15 recuperado tras el backoff")
+        self.assertEqual(recognize_ui.pentest_line(("resolved", 795)), "[*] 13:15 recovered after the backoff")
+
+    def test_a_spanish_system_gets_the_log_in_spanish(self):
+        with mock.patch.object(messages, "LANGUAGE", "es"):
+            self.assertEqual(recognize_ui.pentest_line(("claims", 2)), "[*] 2 reclamaciones de Content ID")
+            self.assertEqual(recognize_ui.pentest_line(("sample", 135, None)), "[-] 02:15 sin match")
 
     def test_an_unknown_event_still_prints_nothing(self):
         self.assertIsNone(recognize_ui.pentest_line(("cualquier-cosa",)))
+
+
+class OfferClipboardTest(unittest.TestCase):
+    def answer(self, reply):
+        with mock.patch.object(recognize_ui.sys, "stdin") as stdin, \
+                mock.patch.object(recognize_ui.sys, "stderr", io.StringIO()) as stderr, \
+                mock.patch("builtins.input", return_value=reply), \
+                mock.patch.object(recognize_ui.subprocess, "run") as run:
+            stdin.isatty.return_value = True
+            stderr.isatty = lambda: True
+            recognize_ui.offer_clipboard("tracklist")
+        return run.called, stderr.getvalue()
+
+    def test_english_asks_with_y_because_that_is_the_yes_an_english_speaker_types(self):
+        copied, shown = self.answer("y")
+        self.assertTrue(copied)
+        self.assertIn("Copy to clipboard? [Y/n]", shown)
+
+    def test_spanish_keeps_s_for_si(self):
+        with mock.patch.object(messages, "LANGUAGE", "es"):
+            copied, shown = self.answer("s")
+        self.assertTrue(copied)
+        self.assertIn("¿Copiar al portapapeles? [S/n]", shown)
+
+    def test_another_letter_does_not_copy(self):
+        copied, _ = self.answer("n")
+        self.assertFalse(copied)
 
 
 ENTRY = {"artist": "A", "title": "T", "label": "", "start": 0, "duration": 60}
@@ -365,36 +397,36 @@ class TuiRowsTest(unittest.TestCase):
             recognize_ui.tui_rows([ENTRY], GAPS, {}, None),
             [
                 "[green]  - 00:00 A - T[/green]",
-                "[dim]  - 01:00 ????? (sin identificar, hasta 05:00)[/dim]",
-                "[dim]  - 06:40 ????? (sin identificar, hasta 10:00)[/dim]",
+                "[dim]  - 01:00 ????? (unidentified, until 05:00)[/dim]",
+                "[dim]  - 06:40 ????? (unidentified, until 10:00)[/dim]",
             ],
         )
 
     def test_active_gap_shows_progress_and_partial_matches(self):
         active = {"index": 0, "sample": 2, "total": 4, "matches": [SUGGESTION], "backoff": False}
         rows = recognize_ui.tui_rows([ENTRY], GAPS, {}, active)
-        self.assertEqual(rows[1], "[cyan]  - 01:00 buscando (muestra 2/4)...[/cyan]")
+        self.assertEqual(rows[1], "[cyan]  - 01:00 searching (sample 2/4)...[/cyan]")
         self.assertEqual(rows[2], "[yellow]  - 01:15 B - U (?)[/yellow]")
-        self.assertEqual(rows[3], "[dim]  - 06:40 ????? (sin identificar, hasta 10:00)[/dim]")
+        self.assertEqual(rows[3], "[dim]  - 06:40 ????? (unidentified, until 10:00)[/dim]")
 
     def test_active_gap_before_first_sample_shows_download(self):
         active = {"index": 0, "sample": 0, "total": 4, "matches": [], "backoff": False}
         self.assertEqual(
             recognize_ui.tui_rows([ENTRY], GAPS, {}, active)[1],
-            "[cyan]  - 01:00 descargando...[/cyan]",
+            "[cyan]  - 01:00 downloading...[/cyan]",
         )
 
     def test_completed_gap_consolidates_suggestions_and_residuals(self):
         rows = recognize_ui.tui_rows([ENTRY], GAPS, {0: [SUGGESTION]}, None)
         self.assertEqual(rows[1], "[yellow]  - 01:15 B - U (?)[/yellow]")
-        self.assertEqual(rows[2], "[dim]  - 01:25 ????? (sin identificar, hasta 05:00)[/dim]")
+        self.assertEqual(rows[2], "[dim]  - 01:25 ????? (unidentified, until 05:00)[/dim]")
 
     def test_completed_late_gap_adds_no_spurious_leading_residual(self):
         late = {"artist": "C", "title": "V", "label": "", "start": 415, "duration": 10, "suggested": True}
         rows = recognize_ui.tui_rows([ENTRY], GAPS, {1: [late]}, None)
-        self.assertNotIn("[dim]  - 00:00 ????? (sin identificar, hasta 06:40)[/dim]", rows)
+        self.assertNotIn("[dim]  - 00:00 ????? (unidentified, until 06:40)[/dim]", rows)
         self.assertIn("[yellow]  - 06:55 C - V (?)[/yellow]", rows)
-        self.assertIn("[dim]  - 07:05 ????? (sin identificar, hasta 10:00)[/dim]", rows)
+        self.assertIn("[dim]  - 07:05 ????? (unidentified, until 10:00)[/dim]", rows)
 
     def test_entry_line_escapes_rich_markup_in_metadata(self):
         entry = {"artist": "DJ [i]X[/i]", "title": "T [Extended]", "label": "", "start": 0, "duration": 60}
