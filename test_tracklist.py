@@ -1571,9 +1571,10 @@ class AdoptTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
     def test_the_tracklist_points_to_the_original_video_not_the_copy(self):
         names = ("adopt", "offer_delete")
         original = {name: getattr(upload, name) for name in names}
-        original_tracklist = {name: getattr(tracklist, name) for name in ("try_claims", "fetch_videos")}
+        original_tracklist = {name: getattr(tracklist, name) for name in ("try_claims", "fetch_videos", "missing_tools")}
         upload.adopt = lambda video_id, report: ("copia123456", None, "Set")
         upload.offer_delete = lambda video_id: None
+        tracklist.missing_tools = lambda: []
         tracklist.try_claims = lambda video_id: (None, [{"start": 0, "duration": 60, "title": "Tema", "artist": "A"}])
         tracklist.fetch_videos = lambda ids, session: {}
 
