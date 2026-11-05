@@ -11,7 +11,13 @@ SAMPLE_ESTIMATE = 4.0
 SPINNER = "⣾⣽⣻⢿⡿⣟⣯⣷"
 
 
-def status_fields(state, now):
+def since_upload(uploaded_at, wall):
+    if uploaded_at is None:
+        return None
+    return tracklist.hhmmss(upload.claims_elapsed(uploaded_at, wall))
+
+
+def status_fields(state, now, wall=None):
     total = state["total"]
     remaining = max(0, int(round((state.get("backoff_until") or 0) - now)))
     if remaining:
@@ -30,6 +36,7 @@ def status_fields(state, now):
         "suggestions": state["suggestions"],
         "elapsed": tracklist.hhmmss(int((state.get("ended") or now) - state["began"])),
         "backoff": remaining,
+        "since_upload": since_upload(state.get("uploaded_at"), time.time() if wall is None else wall),
     }
 
 
@@ -56,7 +63,7 @@ def status_text(state, fields):
             return t("status_done_none")
         return t("status_done_one" if count == 1 else "status_done_many", count=count)
     if state.get("phase") == "content_id":
-        return t("phase_content_id", count=state["claims"], elapsed=tracklist.hhmmss(state["since_upload"]))
+        return t("phase_content_id", count=state["claims"], elapsed=fields["since_upload"])
     phase = phase_label(state.get("phase"))
     if phase:
         return phase
@@ -219,7 +226,7 @@ def run_app(video_id, duration, label, own=False, waiting=False):
                     raise SystemExit(t("claims_unreadable", failure=failure, video_id=self.video_id))
                 counts.append(len(self.entries))
                 elapsed = upload.claims_elapsed(uploaded_at, time.time())
-                self.state.update(phase="content_id", claims=len(self.entries), since_upload=elapsed)
+                self.state.update(phase="content_id", claims=len(self.entries), uploaded_at=uploaded_at)
                 self.log_line(t("claims_count", count=len(self.entries), elapsed=tracklist.hhmmss(elapsed)))
                 if elapsed >= upload.CLAIMS_TIMEOUT:
                     self.log_line(t("content_id_timeout"))

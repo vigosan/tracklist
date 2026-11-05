@@ -2200,10 +2200,17 @@ class TuiWaitInMainTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
 
 class ContentIdStatusTest(unittest.TestCase):
     def test_the_wait_shows_how_many_tracks_content_id_found_and_since_when(self):
-        state = {**STATE, "phase": "content_id", "paused": False, "claims": 5, "since_upload": 720}
+        state = {**STATE, "phase": "content_id", "paused": False, "claims": 5, "uploaded_at": 1000.0}
         self.assertEqual(
-            recognize_tui.status_text(state, recognize_tui.status_fields(state, 102.0)),
+            recognize_tui.status_text(state, recognize_tui.status_fields(state, 102.0, 1720.0)),
             "Content ID: 5 tracks, 12:00 since upload",
+        )
+
+    def test_the_time_since_upload_keeps_ticking_between_claims_polls(self):
+        state = {**STATE, "phase": "content_id", "paused": False, "claims": 5, "uploaded_at": 1000.0}
+        self.assertEqual(
+            recognize_tui.status_text(state, recognize_tui.status_fields(state, 103.0, 1721.0)),
+            "Content ID: 5 tracks, 12:01 since upload",
         )
 
     def test_processing_on_youtube_has_its_own_label(self):
