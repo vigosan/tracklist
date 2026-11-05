@@ -852,7 +852,22 @@ class TryClaimsTest(unittest.TestCase):
         self.assertEqual(failure, stale)
 
 
-class StudioFailureMainTest(unittest.TestCase):
+class IsolatedUploads:
+    def setUp(self):
+        super().setUp()
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        original = upload.UPLOADS_FILE
+        upload.UPLOADS_FILE = self.root / "config" / "uploads.json"
+
+        def restore():
+            upload.UPLOADS_FILE = original
+
+        self.addCleanup(restore)
+
+
+class StudioFailureMainTest(IsolatedUploads, unittest.TestCase):
     COOKIES = {"SAPISID": "a", "__Secure-1PAPISID": "b", "__Secure-3PAPISID": "c"}
 
     def run_main(self, own, code, *flags):
@@ -1535,21 +1550,6 @@ class WaitUntilReadyTest(IsolatedCache, unittest.TestCase):
         self.assertEqual(calls, ["processing", ("claims", 42.0)])
 
 
-class IsolatedUploads:
-    def setUp(self):
-        super().setUp()
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.root = Path(tmp.name)
-        original = upload.UPLOADS_FILE
-        upload.UPLOADS_FILE = self.root / "config" / "uploads.json"
-
-        def restore():
-            upload.UPLOADS_FILE = original
-
-        self.addCleanup(restore)
-
-
 class UploadRegistryTest(IsolatedUploads, unittest.TestCase):
     def test_a_file_never_uploaded_is_unknown(self):
         source = self.root / "set.m4a"
@@ -1587,19 +1587,21 @@ class NeedsWaitTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
 
 
 class WaitInMainTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
+    def setUp(self):
+        super().setUp()
+        self.deleted = []
+
     def run_main(self, ready, *flags, video="https://www.youtube.com/watch?v=tZ6YRoNjvPI"):
         upload.remember("youtube:tZ6YRoNjvPI", "copia123456")
-        deleted = []
         with mock.patch.object(tracklist, "missing_tools", lambda: []), \
                 mock.patch.object(upload, "adopt", lambda video_id, report: ("copia123456", None, "Set", True)), \
                 mock.patch.object(upload, "wait_until_ready", ready), \
-                mock.patch.object(upload, "offer_delete", deleted.append), \
+                mock.patch.object(upload, "offer_delete", self.deleted.append), \
                 mock.patch.object(tracklist, "try_claims", lambda video_id, own: (None, [], None)), \
                 mock.patch.object(tracklist, "fetch_videos", lambda ids, session: {}), \
                 mock.patch("sys.argv", ["tracklist", video, "--no-recognize", "--duration", "600", *flags]), \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             tracklist.main()
-        return deleted
 
     def test_fresh_on_a_finished_copy_waits_again(self):
         tracklist.mark_content_id_done("copia123456")
@@ -1617,11 +1619,10 @@ class WaitInMainTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
         def interrupted(video_id, report):
             raise KeyboardInterrupt
 
-        deleted = []
         with self.assertRaises(SystemExit) as raised:
-            deleted = self.run_main(interrupted)
+            self.run_main(interrupted)
         self.assertIn("run 'tracklist https://www.youtube.com/watch?v=tZ6YRoNjvPI' again", str(raised.exception.code))
-        self.assertEqual(deleted, [])
+        self.assertEqual(self.deleted, [])
 
 
 class PrepareTest(IsolatedUploads, unittest.TestCase):
