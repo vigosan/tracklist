@@ -2637,7 +2637,7 @@ class TuiStepsTest(IsolatedCache, unittest.TestCase):
     ORIGINAL = "orig1234567"
     COPY = "copia123456"
 
-    def run_steps_app(self, script, outcome, waiting_after=False, inspect=None):
+    def run_steps_app(self, script, outcome, waiting_after=False, inspect=None, keys=()):
         from textual.app import App
 
         release = threading.Event()
@@ -2645,8 +2645,12 @@ class TuiStepsTest(IsolatedCache, unittest.TestCase):
         self.seen = {}
         recognized = []
         job = upload.Job(self.ORIGINAL, "Set", None, None, True, None)
+        self.needs_wait_args = []
+        self.claim_owns = []
+        self.steps_calls = 0
 
         def fake_steps(given, progress, stop):
+            self.steps_calls += 1
             self.seen["job"] = given
             self.seen["stop"] = stop
             for event in script:
@@ -2669,8 +2673,15 @@ class TuiStepsTest(IsolatedCache, unittest.TestCase):
             async def scenario():
                 async with app.run_test() as pilot:
                     if inspect:
-                        await pilot.pause(0.3)
+                        for _ in range(50):
+                            await pilot.pause(0.05)
+                            if "Downloading" in str(app.query_one("#status-text").render()):
+                                break
                         self.seen["during"] = inspect(app)
+                        for key in keys:
+                            await pilot.press(key)
+                        await pilot.pause()
+                        self.seen["busy_log"] = [line.text.strip() for line in app.query_one("#log").lines]
                         release.set()
                     await app.workers.wait_for_complete()
                     self.seen["log"] = [line.text.strip() for line in app.query_one("#log").lines]
@@ -2678,13 +2689,13 @@ class TuiStepsTest(IsolatedCache, unittest.TestCase):
             asyncio.run(scenario())
 
         with mock.patch.object(upload, "run_steps", fake_steps), \
-                mock.patch.object(upload, "needs_wait", lambda video_id: waiting_after), \
+                mock.patch.object(upload, "needs_wait", lambda video_id: self.needs_wait_args.append(video_id) or waiting_after), \
                 mock.patch.object(upload, "youtube_client", lambda: "client"), \
                 mock.patch.object(upload, "processing_details", details), \
                 mock.patch.object(upload, "CLAIMS_POLL", 0), \
                 mock.patch.object(tracklist, "fetch_videos", lambda ids, session: {}), \
                 mock.patch.object(tracklist, "probe_duration", lambda video_id: 600), \
-                mock.patch.object(tracklist, "try_claims", lambda video_id, own: ({}, TuiWaitTest.CLAIMS[:1], None)), \
+                mock.patch.object(tracklist, "try_claims", lambda video_id, own: self.claim_owns.append(own) or ({}, TuiWaitTest.CLAIMS[:1], None)), \
                 mock.patch.object(tracklist, "recognize_gaps_async", recognition), \
                 mock.patch.object(tracklist, "notify_ready", lambda title: None), \
                 mock.patch.object(App, "run", drive):
@@ -2717,7 +2728,7 @@ class TuiStepsTest(IsolatedCache, unittest.TestCase):
         self.assertIn(f"Uploaded as https://youtu.be/{self.COPY}", log)
         self.assertIn("careful now", log)
 
-    def test_steps_run_off_the_ui_thread_with_a_stop_event_for_quitting(self):
+    def test_the_steps_get_the_job_and_a_stop_event(self):
         self.run_steps_app([], upload.Outcome(self.COPY, None, True, 600))
         self.assertEqual(self.seen["job"].original_id, self.ORIGINAL)
         self.assertIsInstance(self.seen["stop"], threading.Event)
@@ -2740,9 +2751,27 @@ class TuiStepsTest(IsolatedCache, unittest.TestCase):
         )
         self.assertEqual(result.video_id, self.ORIGINAL)
         self.assertEqual(self.checked, [])
+        self.assertEqual(self.needs_wait_args, [self.ORIGINAL])
+        self.assertEqual(self.claim_owns, [False])
         self.assertIn("quota used up", self.seen["log"])
         self.assertEqual(recognized, [self.ORIGINAL])
         self.assertIsNone(result.error)
+
+    def test_restart_and_new_video_are_ignored_while_the_steps_run_so_nothing_uploads_twice(self):
+        def inspect(app):
+            return None
+
+        for key in ("r", "n", "x"):
+            self.run_steps_app(
+                [("step", "download", 68.0, None)],
+                upload.Outcome(self.COPY, None, True, 600), inspect=inspect, keys=(key,),
+            )
+            self.assertEqual(self.steps_calls, 1)
+            self.assertEqual(self.seen["busy_log"].count("Wait until the download, conversion and upload finish"), 1)
+
+    def test_a_spanish_system_explains_why_the_keys_are_ignored(self):
+        with mock.patch.object(messages, "LANGUAGE", "es"):
+            self.assertEqual(messages.t("log_busy_steps"), "Espera a que terminen la descarga, la conversion y la subida")
 
     def test_a_local_file_with_no_quota_closes_the_app_with_the_message_for_main_to_print(self):
         result, recognized = self.run_steps_app([], SystemExit("quota used up"))

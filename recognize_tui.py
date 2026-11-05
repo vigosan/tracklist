@@ -139,6 +139,7 @@ def run_app(video_id, duration, label, own=False, waiting=False, job=None):
             self.job = job
             self.stop = threading.Event()
             self.was_waiting = waiting
+            self.steps_running = False
             self.own = own
             self.waiting = waiting
             self.waited = False
@@ -241,7 +242,11 @@ def run_app(video_id, duration, label, own=False, waiting=False, job=None):
             def forward(event):
                 self.call_from_thread(self.on_progress, event)
 
-            outcome = await asyncio.to_thread(upload.run_steps, self.job, forward, self.stop)
+            self.steps_running = True
+            try:
+                outcome = await asyncio.to_thread(upload.run_steps, self.job, forward, self.stop)
+            finally:
+                self.steps_running = False
             self.job = None
             self.video_id = outcome.video_id
             self.result_id = outcome.video_id
@@ -425,18 +430,23 @@ def run_app(video_id, duration, label, own=False, waiting=False, job=None):
                 self.resume.clear()
                 log.write(t("log_paused"))
 
+        def busy_with_steps(self):
+            if self.steps_running:
+                self.log_line(t("log_busy_steps"))
+            return self.steps_running
+
         def action_refresh(self):
-            if self.pending is not None:
+            if self.pending is not None or self.busy_with_steps():
                 return
             self.restart()
 
         def action_new(self):
-            if self.pending is not None:
+            if self.pending is not None or self.busy_with_steps():
                 return
             self.ask_or_run("new")
 
         def action_clear(self):
-            if self.pending is not None:
+            if self.pending is not None or self.busy_with_steps():
                 return
             self.ask_or_run("clear")
 
