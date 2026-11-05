@@ -426,5 +426,5 @@ def run_app(video_id, duration, label, own=False, waiting=False):
     app = RecognizeApp(video_id, duration, label, own, waiting)
     app.run()
     app.close_active()
-    interrupted = app.waiting and app.error is None
+    interrupted = waiting and not app.waited and app.error is None
     return app.suggestions, app.entries, app.gaps, app.duration, app.title_line, app.error, interrupted

@@ -2030,12 +2030,17 @@ class TuiWaitTest(IsolatedCache, unittest.TestCase):
         {"artist": "Cosmo", "title": "Wave", "label": "", "start": 60, "duration": 60},
     ]
 
-    def run_wait(self, statuses, counts, until_done=True):
+    def run_wait(self, statuses, counts, until_done=True, steps=None):
         from textual.app import App
 
         processing = iter(statuses)
         polls = iter(counts)
         recognized = []
+        self.checked = []
+
+        def details(client, video_id):
+            self.checked.append(video_id)
+            return next(processing), time.time()
 
         async def recognition(video_id, gaps, progress, resume=None):
             recognized.append(gaps)
@@ -2048,11 +2053,15 @@ class TuiWaitTest(IsolatedCache, unittest.TestCase):
                         await app.workers.wait_for_complete()
                     else:
                         await pilot.pause(0.2)
+                    if steps:
+                        await steps(app, pilot)
                     await pilot.press("q")
             asyncio.run(scenario())
 
         with mock.patch.object(upload, "youtube_client", lambda: "client"), \
-                mock.patch.object(upload, "processing_details", lambda client, video_id: (next(processing), time.time())), \
+                mock.patch.object(upload, "processing_details", details), \
+                mock.patch.object(tracklist, "fetch_videos", lambda ids, session: {}), \
+                mock.patch.object(tracklist, "probe_duration", lambda video_id: 600), \
                 mock.patch.object(upload, "PROCESSING_POLL", 0), \
                 mock.patch.object(upload, "CLAIMS_POLL", 0), \
                 mock.patch.object(tracklist, "try_claims", lambda video_id, own: ({}, self.CLAIMS[:next(polls, counts[-1] if counts else 0)], None)), \
@@ -2075,6 +2084,29 @@ class TuiWaitTest(IsolatedCache, unittest.TestCase):
         self.assertTrue(result[6])
         self.assertEqual(recognized, [])
         self.assertFalse(tracklist.load_cache("copia123456")["content_id_done"])
+
+    def test_typing_another_url_during_the_wait_still_counts_as_leaving_mid_wait(self):
+        async def type_url(app, pilot):
+            await pilot.press("n")
+            app.query_one("#video-input").value = "dnS4s0gar-5"
+            await pilot.press("enter")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+
+        result, _ = self.run_wait(iter(lambda: "processing", None), [], until_done=False, steps=type_url)
+        self.assertTrue(result[6])
+        self.assertFalse(tracklist.load_cache("copia123456")["content_id_done"])
+
+    def test_refreshing_after_a_finished_wait_does_not_wait_again(self):
+        async def refresh(app, pilot):
+            await pilot.press("r")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+
+        result, recognized = self.run_wait(["processing", "succeeded"], [2, 2, 2], steps=refresh)
+        self.assertEqual(self.checked, ["copia123456", "copia123456"])
+        self.assertEqual(len(recognized), 2)
+        self.assertFalse(result[6])
 
     def test_a_failed_processing_closes_with_the_error(self):
         result, recognized = self.run_wait(["failed"], [])
