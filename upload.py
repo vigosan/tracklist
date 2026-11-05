@@ -86,6 +86,11 @@ def terminate_when_stopped(process, stop):
         pass
     if stop.is_set() and process.poll() is None:
         process.terminate()
+        deadline = time.monotonic() + TERMINATE_GRACE
+        while process.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if process.poll() is None:
+            process.kill()
 
 
 def run_tracked(command, parse, progress, stop):

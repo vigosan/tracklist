@@ -1500,15 +1500,16 @@ class FakeStdout:
     def __iter__(self):
         yield from self.lines
         if self.process.stalls:
-            self.process.ended.wait(5)
+            self.process.ended.wait(30)
 
     def close(self):
         self.closed = True
 
 
 class FakeProcess:
-    def __init__(self, lines=(), returncode=0, stderr="", stderr_file=None, stalls=False):
+    def __init__(self, lines=(), returncode=0, stderr="", stderr_file=None, stalls=False, ignores_terminate=False):
         self.stalls = stalls
+        self.ignores_terminate = ignores_terminate
         self.ended = threading.Event()
         self.stdout = FakeStdout(lines, self)
         self.returncode = returncode
@@ -1524,7 +1525,8 @@ class FakeProcess:
 
     def terminate(self):
         self.terminated = True
-        self.ended.set()
+        if not self.ignores_terminate:
+            self.ended.set()
 
     def kill(self):
         self.killed = True
@@ -1544,12 +1546,13 @@ class DownloadForeignTest(IsolatedCache, unittest.TestCase):
         self.lines = []
         self.stderr = ""
         self.stalls = False
+        self.ignores_terminate = False
         self.process = None
         original = (upload.subprocess.Popen, tracklist.current_browser)
 
         def fake_popen(command, **kwargs):
             self.commands.append(command)
-            self.process = FakeProcess(self.lines, self.returncode, self.stderr, kwargs["stderr"], self.stalls)
+            self.process = FakeProcess(self.lines, self.returncode, self.stderr, kwargs["stderr"], self.stalls, self.ignores_terminate)
             return self.process
 
         def restore():
@@ -1596,13 +1599,33 @@ class DownloadForeignTest(IsolatedCache, unittest.TestCase):
         events = self.download_events(["[youtube] warming up\n", "  5.0%|  1MiB/s\n"])
         self.assertEqual(events, [("step", "download", 5.0, "1MiB/s")])
 
+    def stop_from_another_thread(self):
+        stop = threading.Event()
+        timer = threading.Timer(0.2, stop.set)
+        timer.start()
+        self.addCleanup(timer.join)
+        self.addCleanup(timer.cancel)
+        return stop
+
     def test_stopping_a_stalled_download_kills_yt_dlp_even_if_it_prints_nothing(self):
         self.stalls = True
-        stop = threading.Event()
-        threading.Timer(0.2, stop.set).start()
+        started = time.monotonic()
         with self.assertRaises(upload.Cancelled):
-            upload.download_foreign("vid12345678", stop=stop)
+            upload.download_foreign("vid12345678", stop=self.stop_from_another_thread())
+        self.assertLess(time.monotonic() - started, 5)
         self.assertTrue(self.process.terminated and self.process.waited)
+
+    def test_a_stalled_download_that_ignores_terminate_is_killed(self):
+        self.stalls = True
+        self.ignores_terminate = True
+        original = upload.TERMINATE_GRACE
+        upload.TERMINATE_GRACE = 0.2
+        self.addCleanup(setattr, upload, "TERMINATE_GRACE", original)
+        started = time.monotonic()
+        with self.assertRaises(upload.Cancelled):
+            upload.download_foreign("vid12345678", stop=self.stop_from_another_thread())
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertTrue(self.process.terminated and self.process.killed)
 
     def test_a_failing_progress_callback_still_reaps_the_child(self):
         self.lines = ["  5.0%|  1MiB/s\n"]
