@@ -472,6 +472,7 @@ def run_steps(job, progress, stop):
             if job.local:
                 sys.exit(t("quota_exhausted"))
             progress(("warning", t("quota_shazam")))
+            place_audio(audio, job.original_id, duration, progress, stop)
             return Outcome(job.original_id, audio, False, duration)
         if job.local:
             remember_upload(job.local, copy)

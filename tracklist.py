@@ -655,7 +655,8 @@ def notify_ready(title, run=subprocess.run):
         pass
 
 
-def terminal_progress(stream=sys.stderr):
+def terminal_progress(stream=None):
+    stream = stream or sys.stderr
     labels = {"download": "step_download", "convert": "converting", "upload": "uploading", "audio": "step_audio"}
     state = {"step": None, "open": False}
 
@@ -677,10 +678,10 @@ def terminal_progress(stream=sys.stderr):
             elif name != state["step"]:
                 stream.write(f"{label}\n")
             state["step"] = name
-        else:
+        elif event[0] == "warning" or event[1] == "upload":
             close_line()
             state["step"] = None
-            stream.write(t("uploaded", video_id=event[2]) if event[0] == "step-done" else event[1])
+            stream.write(event[1] if event[0] == "warning" else t("uploaded", video_id=event[2]))
             stream.write("\n")
         stream.flush()
 
@@ -728,11 +729,11 @@ def main():
             sys.exit(t("resume_later", command=args.video))
         finally:
             progress.finish()
-        video_id, audio, own = outcome.video_id, outcome.audio, outcome.own
+        video_id, own = outcome.video_id, outcome.own
         original_title = job.title
         args.duration = args.duration or outcome.duration
     else:
-        video_id, audio, own = original_id, None, False
+        video_id, own = original_id, False
         if args.fresh:
             clear_cache(video_id)
     shown_id = original_id or video_id

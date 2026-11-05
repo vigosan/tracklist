@@ -2123,6 +2123,11 @@ class RunStepsTest(StepFakes, unittest.TestCase):
         self.assertIn(("warning", "YouTube upload quota used up: continuing with Shazam only"), self.events)
         self.assertEqual(upload.load_uploads(), {})
 
+    def test_an_exhausted_quota_still_places_the_download_so_shazam_does_not_fetch_it_again(self):
+        self.quota_error = True
+        self.run_steps(self.foreign())
+        self.assertIn(("place", "orig1234567", 600), self.calls)
+
     def test_an_exhausted_quota_stops_a_local_recording(self):
         self.quota_error = True
         with self.assertRaises(SystemExit) as raised:
@@ -2197,6 +2202,17 @@ class TerminalProgressTest(unittest.TestCase):
         progress(("step", "upload", 3.0, None))
         self.assertEqual(stream.getvalue(), "Converting to video\nUploading to YouTube\n")
 
+    def test_only_a_finished_upload_says_uploaded(self):
+        stream = self.Stream(False)
+        tracklist.terminal_progress(stream)(("step-done", "convert", "x"))
+        self.assertEqual(stream.getvalue(), "")
+
+    def test_it_writes_to_the_stderr_in_place_when_called(self):
+        errors = io.StringIO()
+        with contextlib.redirect_stderr(errors):
+            tracklist.terminal_progress()(("warning", "Careful"))
+        self.assertEqual(errors.getvalue(), "Careful\n")
+
     def test_warnings_get_their_own_line(self):
         stream = self.Stream(True)
         progress = tracklist.terminal_progress(stream)
@@ -2251,7 +2267,7 @@ class RunStepsInMainTest(StepFakes, unittest.TestCase):
         self.run_main("--from-json", str(saved), video=str(source))
         self.assertIn("upload", self.calls)
 
-    def test_the_duration_of_the_audio_is_used_when_none_is_given(self):
+    def test_the_duration_of_the_audio_is_used_when_none_is_given_and_claims_say_nothing(self):
         upload.remember(upload.remote_key("orig1234567"), "copia123456")
         upload.downloads_dir().mkdir(parents=True)
         (upload.downloads_dir() / "orig1234567.webm").write_bytes(b"audio")
@@ -2259,8 +2275,9 @@ class RunStepsInMainTest(StepFakes, unittest.TestCase):
         seen = []
         with mock.patch.object(tracklist, "find_gaps", lambda entries, duration: seen.append(duration) or []), \
                 mock.patch.object(tracklist, "scan_gaps", lambda duration: seen.append(duration) or []):
-            with self.assertRaises(SystemExit):
+            with self.assertRaises(SystemExit) as raised:
                 self.run_main(duration=())
+        self.assertEqual(raised.exception.code, messages.t("too_short"))
         self.assertEqual(seen, [1234])
 
 
