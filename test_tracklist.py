@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 import urllib.error
@@ -1275,6 +1276,155 @@ class PlaceAudioTest(LocalAudio, unittest.TestCase):
         self.assertTrue(tracklist.audio_path("vid12345678").exists())
 
 
+class FakeFfmpeg:
+    def __init__(self, test, lines=(), returncode=0):
+        self.test = test
+        self.lines = lines
+        self.returncode = returncode
+        self.commands = []
+        self.processes = []
+
+    def __call__(self, command, **kwargs):
+        self.commands.append(command)
+        Path(command[-1]).write_bytes(b"mp3")
+        process = FakeProcess(self.lines, self.returncode, "boom")
+        self.processes.append(process)
+        return process
+
+
+class TrackedAudioTest(LocalAudio, unittest.TestCase):
+    def fake_ffmpeg(self, lines=(), returncode=0):
+        fake = FakeFfmpeg(self, lines, returncode)
+        original = upload.subprocess.Popen
+        upload.subprocess.Popen = fake
+        self.addCleanup(setattr, upload.subprocess, "Popen", original)
+        return fake
+
+    def test_audio_conversion_reports_percent_from_ffmpeg(self):
+        self.fake_ffmpeg(["out_time_us=30000000\n", "progress=continue\n"])
+        events = []
+        upload.place_audio(self.source, "vid12345678", 120, events.append)
+        self.assertEqual(events, [("step", "audio", 25.0, None)])
+
+    def test_conversion_progress_never_passes_a_hundred_percent(self):
+        self.fake_ffmpeg(["out_time_us=999000000\n"])
+        events = []
+        upload.place_audio(self.source, "vid12345678", 120, events.append)
+        self.assertEqual(events, [("step", "audio", 100, None)])
+
+    def test_a_video_conversion_reports_under_its_own_name(self):
+        self.fake_ffmpeg(["out_time_us=60000000\n"])
+        events = []
+        upload.convert_to_video(self.source, self.root / "out.mp4", 120, events.append)
+        self.assertEqual(events, [("step", "convert", 50.0, None)])
+
+    def test_without_a_duration_no_percent_is_invented(self):
+        self.fake_ffmpeg(["out_time_us=30000000\n"])
+        events = []
+        upload.place_audio(self.source, "vid12345678", None, events.append)
+        self.assertEqual(events, [])
+
+    def test_a_cancelled_audio_conversion_leaves_no_mp3(self):
+        self.fake_ffmpeg(["out_time_us=30000000\n"])
+        stop = threading.Event()
+        stop.set()
+        with self.assertRaises(upload.Cancelled):
+            upload.place_audio(self.source, "vid12345678", 120, stop=stop)
+        target = tracklist.audio_path("vid12345678")
+        self.assertEqual(list(target.parent.glob("vid12345678*")), [])
+
+    def test_a_failed_audio_conversion_leaves_no_mp3(self):
+        self.fake_ffmpeg([], returncode=1)
+        with self.assertRaises(subprocess.CalledProcessError):
+            upload.place_audio(self.source, "vid12345678", 120)
+        target = tracklist.audio_path("vid12345678")
+        self.assertEqual(list(target.parent.glob("vid12345678*")), [])
+
+    def test_a_finished_audio_conversion_appears_only_when_complete(self):
+        target = tracklist.audio_path("vid12345678")
+        seen = []
+
+        def report(event):
+            seen.append(target.exists())
+
+        self.fake_ffmpeg(["out_time_us=30000000\n"])
+        upload.place_audio(self.source, "vid12345678", 120, report)
+        self.assertEqual(seen, [False])
+        self.assertTrue(target.exists())
+        self.assertEqual(list(target.parent.glob("*.part.mp3")), [])
+
+    def test_ffmpeg_is_asked_to_print_machine_readable_progress(self):
+        fake = self.fake_ffmpeg()
+        upload.place_audio(self.source, "vid12345678", 120)
+        command = fake.commands[0]
+        self.assertIn("-nostats", command)
+        self.assertEqual(command[command.index("-progress") + 1], "pipe:1")
+
+
+class FakeChunkRequest:
+    def __init__(self, statuses, response, on_chunk=None):
+        self.steps = list(statuses) + [None]
+        self.response = response
+        self.on_chunk = on_chunk
+        self.chunks = 0
+
+    def next_chunk(self):
+        status = self.steps[self.chunks]
+        self.chunks += 1
+        if self.on_chunk:
+            self.on_chunk()
+        if status is None:
+            return None, self.response
+        return FakeStatus(status), None
+
+
+class FakeStatus:
+    def __init__(self, fraction):
+        self.fraction = fraction
+
+    def progress(self):
+        return self.fraction
+
+
+class FakeInsertClient:
+    def __init__(self, request):
+        self.request = request
+        self.media = None
+
+    def videos(self):
+        return self
+
+    def insert(self, **kwargs):
+        self.media = kwargs["media_body"]
+        return self.request
+
+
+class UploadVideoTest(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.path = Path(tmp.name) / "set.mp4"
+        self.path.write_bytes(b"video")
+
+    def test_upload_reports_progress_per_chunk(self):
+        client = FakeInsertClient(FakeChunkRequest([0.25, 0.5], {"id": "abc"}))
+        events = []
+        self.assertEqual(upload.upload_video(client, self.path, "Set", events.append), "abc")
+        self.assertEqual(events, [("step", "upload", 25.0, None), ("step", "upload", 50.0, None)])
+
+    def test_the_upload_is_sent_in_chunks_so_progress_and_cancel_can_happen(self):
+        client = FakeInsertClient(FakeChunkRequest([], {"id": "abc"}))
+        upload.upload_video(client, self.path, "Set")
+        self.assertEqual(client.media.chunksize(), upload.UPLOAD_CHUNK)
+
+    def test_stopping_an_upload_stops_between_chunks(self):
+        stop = threading.Event()
+        request = FakeChunkRequest([0.25, 0.5], {"id": "abc"}, stop.set)
+        with self.assertRaises(upload.Cancelled):
+            upload.upload_video(FakeInsertClient(request), self.path, "Set", stop=stop)
+        self.assertEqual(request.chunks, 1)
+
+
 class FakeRequest:
     def __init__(self, response):
         self.response = response
@@ -1333,23 +1483,82 @@ class NoChannelTest(unittest.TestCase):
         self.assertIn("has no YouTube channel", str(raised.exception))
 
 
+class FakeProcess:
+    def __init__(self, lines=(), returncode=0, stderr=""):
+        self.stdout = iter(lines)
+        self.stderr = io.StringIO(stderr)
+        self.returncode = returncode
+        self.terminated = False
+        self.waited = False
+
+    def terminate(self):
+        self.terminated = True
+
+    def wait(self):
+        self.waited = True
+        return self.returncode
+
+
 class DownloadForeignTest(IsolatedCache, unittest.TestCase):
     def setUp(self):
         super().setUp()
         self.commands = []
         self.returncode = 0
-        original = (upload.subprocess.run, tracklist.current_browser)
+        self.lines = []
+        self.process = None
+        original = (upload.subprocess.Popen, tracklist.current_browser)
 
-        def fake_run(command, **kwargs):
+        def fake_popen(command, **kwargs):
             self.commands.append(command)
-            return subprocess.CompletedProcess(command, self.returncode)
+            self.process = FakeProcess(self.lines, self.returncode)
+            return self.process
 
         def restore():
-            upload.subprocess.run, tracklist.current_browser = original
+            upload.subprocess.Popen, tracklist.current_browser = original
 
         self.addCleanup(restore)
-        upload.subprocess.run = fake_run
+        upload.subprocess.Popen = fake_popen
         tracklist.current_browser = lambda: "firefox"
+
+    def download_events(self, lines):
+        self.lines = lines
+        events = []
+        upload.download_foreign("vid12345678", events.append)
+        return events
+
+    def test_download_progress_reports_percent_and_speed(self):
+        events = self.download_events(["download:  68.0%|  4.92MiB/s\n"])
+        self.assertEqual(events, [("step", "download", 68.0, "4.92MiB/s")])
+
+    def test_download_progress_survives_colour_codes(self):
+        events = self.download_events(["download:\x1b[0;94m 68.0%\x1b[0m|\x1b[0;32m4.92MiB/s\x1b[0m\n"])
+        self.assertEqual(events, [("step", "download", 68.0, "4.92MiB/s")])
+
+    def test_download_without_a_known_size_reports_no_percent(self):
+        events = self.download_events(["download:   N/A|  1.00MiB/s\n"])
+        self.assertEqual(events, [("step", "download", None, "1.00MiB/s")])
+
+    def test_a_download_already_cancelled_never_starts_yt_dlp(self):
+        self.lines = ["download:  10.0%|  1MiB/s\n", "download:  20.0%|  1MiB/s\n"]
+        stop = threading.Event()
+        stop.set()
+        with self.assertRaises(upload.Cancelled):
+            upload.download_foreign("vid12345678", stop=stop)
+        self.assertEqual(self.commands, [])
+
+    def test_stopping_during_a_download_kills_yt_dlp_after_the_current_line(self):
+        self.lines = ["download:  10.0%|  1MiB/s\n", "download:  20.0%|  1MiB/s\n"]
+        stop = threading.Event()
+        events = []
+
+        def report(event):
+            events.append(event)
+            stop.set()
+
+        with self.assertRaises(upload.Cancelled):
+            upload.download_foreign("vid12345678", report, stop)
+        self.assertEqual(len(events), 1)
+        self.assertTrue(self.process.terminated and self.process.waited)
 
     def test_the_download_uses_the_users_yt_dlp_options_and_only_audio(self):
         upload.download_foreign("vid12345678")
@@ -1689,7 +1898,7 @@ class AdoptTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
                  "upload_video", "wait_for_processing", "wait_for_claims")
         original = {name: getattr(upload, name) for name in names}
         self.real_download_foreign = upload.download_foreign
-        original_run = upload.subprocess.run
+        original_popen = upload.subprocess.Popen
 
         def client():
             if self.client_error:
@@ -1724,7 +1933,7 @@ class AdoptTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
         def restore():
             for name, value in original.items():
                 setattr(upload, name, value)
-            upload.subprocess.run = original_run
+            upload.subprocess.Popen = original_popen
 
         self.addCleanup(restore)
 
@@ -1745,14 +1954,14 @@ class AdoptTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
     def test_relaunching_a_foreign_url_neither_downloads_nor_uploads_again(self):
         commands = []
 
-        def fake_run(command, **kwargs):
+        def fake_popen(command, **kwargs):
             commands.append(command)
             target = command[command.index("-o") + 1].replace("%(ext)s", "webm")
             Path(target).write_bytes(b"audio")
-            return subprocess.CompletedProcess(command, 0)
+            return FakeProcess()
 
         upload.download_foreign = self.real_download_foreign
-        upload.subprocess.run = fake_run
+        upload.subprocess.Popen = fake_popen
         original_browser = tracklist.current_browser
         tracklist.current_browser = lambda: "firefox"
         self.addCleanup(setattr, tracklist, "current_browser", original_browser)

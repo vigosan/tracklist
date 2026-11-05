@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -22,6 +23,8 @@ PROCESSING_POLL = 30
 CLAIMS_POLL = 120
 CLAIMS_STABLE_POLLS = 3
 CLAIMS_TIMEOUT = 3600
+UPLOAD_CHUNK = 8 * 1024 * 1024
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
 LEFTOVER_SUFFIXES = (".part", ".ytdl", ".temp")
 CONSOLE_STEPS = [
     ("https://console.cloud.google.com/projectcreate", "step_project"),
@@ -36,6 +39,10 @@ DOWNLOAD_OPTIONS = ["-N", "4", "--throttled-rate", "100K", "--retries", "10",
 
 
 class QuotaExceeded(Exception):
+    pass
+
+
+class Cancelled(Exception):
     pass
 
 
@@ -62,31 +69,74 @@ def downloaded_audio(video_id):
     return None
 
 
-def download_foreign(video_id):
+def run_tracked(command, parse, progress, stop):
+    if stop and stop.is_set():
+        raise Cancelled()
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    for line in process.stdout:
+        event = parse(line)
+        if event is not None and progress:
+            progress(event)
+        if stop and stop.is_set():
+            process.terminate()
+            process.wait()
+            raise Cancelled()
+    process.wait()
+    stderr = process.stderr.read()
+    if process.returncode != 0:
+        raise subprocess.CalledProcessError(process.returncode, command, stderr=stderr)
+
+
+def clean_number(text):
+    try:
+        return float(ANSI_ESCAPE.sub("", text).strip().rstrip("%"))
+    except ValueError:
+        return None
+
+
+def parse_download(line):
+    if not line.startswith("download:"):
+        return None
+    percent, _, speed = line.removeprefix("download:").partition("|")
+    return ("step", "download", clean_number(percent), ANSI_ESCAPE.sub("", speed).strip() or None)
+
+
+def parse_ffmpeg(name, duration):
+    def parse(line):
+        key, _, value = line.strip().partition("=")
+        if key != "out_time_us" or not duration or not value.isdigit():
+            return None
+        return ("step", name, min(100, int(value) / 1e6 / duration * 100), None)
+    return parse
+
+
+def download_foreign(video_id, progress=None, stop=None):
     existing = downloaded_audio(video_id)
     if existing:
         return existing
     downloads_dir().mkdir(parents=True, exist_ok=True)
-    result = subprocess.run(
-        ["yt-dlp", "--quiet", "--no-warnings", "--progress", *DOWNLOAD_OPTIONS,
-         "--cookies-from-browser", tracklist.current_browser(),
-         "-o", str(downloads_dir() / f"{video_id}.%(ext)s"),
-         f"https://www.youtube.com/watch?v={video_id}"],
-    )
-    if result.returncode != 0:
+    command = ["yt-dlp", "--quiet", "--no-warnings", "--progress", "--newline",
+               "--progress-template", "download:%(progress._percent_str)s|%(progress._speed_str)s",
+               *DOWNLOAD_OPTIONS,
+               "--cookies-from-browser", tracklist.current_browser(),
+               "-o", str(downloads_dir() / f"{video_id}.%(ext)s"),
+               f"https://www.youtube.com/watch?v={video_id}"]
+    try:
+        run_tracked(command, parse_download, progress, stop)
+    except subprocess.CalledProcessError:
         return None
     return downloaded_audio(video_id)
 
 
-def convert_to_video(source, target):
-    subprocess.run(
-        ["ffmpeg", "-y", "-v", "error",
+def convert_to_video(source, target, duration=None, progress=None, stop=None):
+    run_tracked(
+        ["ffmpeg", "-y", "-v", "error", "-progress", "pipe:1", "-nostats",
          "-f", "lavfi", "-i", "color=c=black:s=640x360:r=1",
          "-i", str(source),
          "-map", "0:v", "-map", "1:a",
          "-c:v", "libx264", "-tune", "stillimage", "-pix_fmt", "yuv420p",
          "-c:a", "copy", "-shortest", str(target)],
-        check=True, capture_output=True,
+        parse_ffmpeg("convert", duration), progress, stop,
     )
 
 
@@ -99,16 +149,21 @@ def local_duration(source):
     return int(float(result.stdout))
 
 
-def place_audio(source, video_id):
+def place_audio(source, video_id, duration=None, progress=None, stop=None):
     target = tracklist.audio_path(video_id)
     if target.exists():
         return
     tracklist.AUDIO_DIR.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        ["ffmpeg", "-y", "-v", "error", "-i", str(source), "-vn",
-         "-codec:a", "libmp3lame", "-q:a", "2", str(target)],
-        check=True, capture_output=True,
-    )
+    partial = target.with_suffix(".part.mp3")
+    try:
+        run_tracked(
+            ["ffmpeg", "-y", "-v", "error", "-progress", "pipe:1", "-nostats",
+             "-i", str(source), "-vn", "-codec:a", "libmp3lame", "-q:a", "2", str(partial)],
+            parse_ffmpeg("audio", duration), progress, stop,
+        )
+        partial.replace(target)
+    finally:
+        partial.unlink(missing_ok=True)
 
 
 def claims_settled(counts, elapsed):
@@ -292,17 +347,21 @@ def youtube_client():
     return build("youtube", "v3", credentials=credentials)
 
 
-def upload_video(client, path, title):
+def upload_video(client, path, title, progress=None, stop=None):
     from googleapiclient.errors import HttpError
     from googleapiclient.http import MediaFileUpload
 
     body = {"snippet": {"title": title}, "status": {"privacyStatus": "private"}}
-    media = MediaFileUpload(str(path), mimetype="video/mp4", chunksize=-1, resumable=True)
+    media = MediaFileUpload(str(path), mimetype="video/mp4", chunksize=UPLOAD_CHUNK, resumable=True)
     request = client.videos().insert(part="snippet,status", body=body, media_body=media)
     try:
         response = None
         while response is None:
-            _, response = request.next_chunk()
+            status, response = request.next_chunk()
+            if status and progress:
+                progress(("step", "upload", status.progress() * 100, None))
+            if response is None and stop and stop.is_set():
+                raise Cancelled()
     except HttpError as error:
         if any(reason in error.content.decode() for reason in QUOTA_REASONS):
             raise QuotaExceeded() from error
