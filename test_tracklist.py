@@ -3349,8 +3349,15 @@ class TuiLinkTest(unittest.TestCase):
                     log = app.query_one("#log", RichLog)
                     log.clear()
                     app.log_line(messages.t("uploaded", video_id="JQ4i5zJu0M8"))
-                    await pilot.pause()
-                    await pilot.click("#log", offset=(len("Uploaded as ") + 5, 1))
+                    offset = (len("Uploaded as ") + 5, 1)
+                    settled = 0
+                    for _ in range(300):
+                        await pilot.pause(0.01)
+                        point = (log.region.x + offset[0], log.region.y + offset[1])
+                        settled = settled + 1 if app.screen.get_style_at(*point).link else 0
+                        if settled == 30:
+                            break
+                    await pilot.click("#log", offset=offset)
                     await pilot.pause()
                     await pilot.press("q")
             asyncio.run(scenario())
