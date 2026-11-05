@@ -877,7 +877,7 @@ class StudioFailureMainTest(IsolatedUploads, unittest.TestCase):
 
         errors = io.StringIO()
         with mock.patch.object(tracklist, "missing_tools", lambda: []), \
-                mock.patch.object(upload, "adopt", lambda video_id, report: (video_id, None, None, own)), \
+                fake_job("orig1234567", None, own), \
                 mock.patch.object(upload, "offer_delete", lambda video_id: None), \
                 mock.patch.object(tracklist, "fresh_session", lambda: tracklist.studio_session(self.COOKIES, 1)), \
                 mock.patch.object(tracklist, "load_cache", lambda video_id: {"samples": {}, "title": None, "duration": None}), \
@@ -1894,7 +1894,7 @@ class WaitInMainTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
     def run_main(self, ready, *flags, video="https://www.youtube.com/watch?v=tZ6YRoNjvPI"):
         upload.remember("youtube:tZ6YRoNjvPI", "copia123456")
         with mock.patch.object(tracklist, "missing_tools", lambda: []), \
-                mock.patch.object(upload, "adopt", lambda video_id, report: ("copia123456", None, "Set", True)), \
+                fake_job("copia123456", "Set", True), \
                 mock.patch.object(upload, "wait_until_ready", ready), \
                 mock.patch.object(upload, "offer_delete", self.deleted.append), \
                 mock.patch.object(tracklist, "try_claims", lambda video_id, own: (None, [], None)), \
@@ -1925,160 +1925,124 @@ class WaitInMainTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
         self.assertEqual(self.deleted, [])
 
 
-class PrepareTest(IsolatedUploads, unittest.TestCase):
+def fake_job(copy, title, own):
+    return mock.patch.multiple(
+        upload,
+        plan_job=lambda *args, **kwargs: upload.Job("orig1234567", title, None, copy, own, None),
+        run_steps=lambda job, progress, stop: upload.Outcome(copy, None, own, None),
+    )
+
+
+class StepFakes(IsolatedUploads, IsolatedCache):
     def setUp(self):
         super().setUp()
-        self.source = self.root / "Spook Multiespacio 3.m4a"
-        self.source.write_bytes(b"audio")
-        self.uploads = []
-        self.upload_error = None
-        names = ("youtube_client", "convert_to_video", "upload_video",
-                 "wait_for_processing", "wait_for_claims")
-        original = {name: getattr(upload, name) for name in names}
-
-        def refuse_wait(*args, **kwargs):
-            raise AssertionError("upload must not wait")
-
-        def fake_upload(client, path, title):
-            if self.upload_error:
-                raise self.upload_error
-            self.uploads.append(title)
-            return "vid12345678"
-
-        upload.youtube_client = lambda: "client"
-        upload.convert_to_video = lambda source, target: target.write_bytes(b"mp4")
-        upload.upload_video = fake_upload
-        upload.wait_for_processing = refuse_wait
-        upload.wait_for_claims = refuse_wait
-
-        def restore():
-            for name, value in original.items():
-                setattr(upload, name, value)
-
-        self.addCleanup(restore)
-
-    def test_the_video_is_titled_after_the_file(self):
-        self.assertEqual(upload.prepare(self.source, lambda message: None), "vid12345678")
-        self.assertEqual(self.uploads, ["Spook Multiespacio 3"])
-
-    def test_relaunching_does_not_upload_twice(self):
-        upload.prepare(self.source, lambda message: None)
-        upload.prepare(self.source, lambda message: None)
-        self.assertEqual(len(self.uploads), 1)
-
-    def test_a_failed_upload_is_retried_on_the_next_run(self):
-        self.upload_error = upload.QuotaExceeded()
-        with self.assertRaises(upload.QuotaExceeded):
-            upload.prepare(self.source, lambda message: None)
-        self.assertIsNone(upload.known_upload(self.source))
-
-    def test_a_given_title_wins_over_the_file_name(self):
-        upload.prepare(self.source, lambda message: None, "Set original")
-        self.assertEqual(self.uploads, ["Set original"])
-
-
-class AdoptTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
-    def setUp(self):
-        super().setUp()
-        self.uploaded = []
-        self.downloads = 0
+        self.calls = []
+        self.uploaded_titles = []
+        self.quota_error = False
         self.owner = (False, "Set ajeno")
         self.client_error = None
-        self.quota_error = False
-        self.messages = []
-        names = ("youtube_client", "video_owner", "download_foreign", "convert_to_video",
-                 "upload_video", "wait_for_processing", "wait_for_claims")
-        original = {name: getattr(upload, name) for name in names}
-        self.real_download_foreign = upload.download_foreign
-        original_popen = upload.subprocess.Popen
+        self.reports = []
+        self.download_result = "file"
 
         def client():
             if self.client_error:
                 raise self.client_error
+            self.calls.append("client")
             return "client"
 
-        def fake_upload(client, path, title):
-            if self.quota_error:
-                raise upload.QuotaExceeded()
-            self.uploaded.append(title)
-            return "copia123456"
-
-        def fake_download(video_id):
-            self.downloads += 1
+        def fake_download(video_id, progress=None, stop=None):
+            self.calls.append("download")
+            if self.download_result is None:
+                return None
             upload.downloads_dir().mkdir(parents=True, exist_ok=True)
             path = upload.downloads_dir() / f"{video_id}.webm"
             path.write_bytes(b"audio")
             return path
 
-        upload.youtube_client = client
-        upload.video_owner = lambda client, video_id: self.owner
-        upload.download_foreign = fake_download
-        upload.convert_to_video = lambda source, target: target.write_bytes(b"mp4")
-        upload.upload_video = fake_upload
+        def fake_convert(source, target, duration=None, progress=None, stop=None):
+            self.calls.append(("convert", duration))
+            target.write_bytes(b"mp4")
 
-        def refuse_wait(*args, **kwargs):
-            raise AssertionError("adopt must not wait")
+        def fake_upload(client, path, title, progress=None, stop=None):
+            self.calls.append("upload")
+            if self.quota_error:
+                raise upload.QuotaExceeded()
+            self.uploaded_titles.append(title)
+            return "copia123456"
 
-        upload.wait_for_processing = refuse_wait
-        upload.wait_for_claims = refuse_wait
+        def fake_place(source, video_id, duration=None, progress=None, stop=None):
+            self.calls.append(("place", video_id, duration))
 
-        def restore():
-            for name, value in original.items():
-                setattr(upload, name, value)
-            upload.subprocess.Popen = original_popen
+        patches = [
+            mock.patch.object(upload, "youtube_client", client),
+            mock.patch.object(upload, "video_owner", lambda client, video_id: self.owner),
+            mock.patch.object(upload, "download_foreign", fake_download),
+            mock.patch.object(upload, "convert_to_video", fake_convert),
+            mock.patch.object(upload, "upload_video", fake_upload),
+            mock.patch.object(upload, "place_audio", fake_place),
+            mock.patch.object(upload, "local_duration", lambda source: 600),
+        ]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
 
-        self.addCleanup(restore)
 
-    def adopt(self):
-        return upload.adopt("orig1234567", self.messages.append)
+class PlanJobTest(StepFakes, unittest.TestCase):
+    def plan(self, video_id="orig1234567", local=None):
+        return upload.plan_job(video_id, local, self.reports.append)
 
-    def test_my_own_video_is_read_directly_without_uploading(self):
+    def test_my_own_video_is_read_directly_with_nothing_to_run(self):
         self.owner = (True, "Mi set")
-        self.assertEqual(self.adopt(), ("orig1234567", None, None, True))
-        self.assertEqual((self.uploaded, self.downloads), ([], 0))
+        job = self.plan()
+        self.assertEqual((job.copy, job.own, job.audio, job.title), ("orig1234567", True, None, None))
+        self.assertEqual(self.calls, ["client"])
 
-    def test_a_foreign_video_is_uploaded_with_its_original_title(self):
-        video_id, audio, title, own = self.adopt()
-        self.assertEqual((video_id, title, own), ("copia123456", "Set ajeno", True))
-        self.assertEqual(audio, upload.downloads_dir() / "orig1234567.webm")
-        self.assertEqual(self.uploaded, ["Set ajeno"])
-
-    def test_relaunching_a_foreign_url_neither_downloads_nor_uploads_again(self):
-        commands = []
-
-        def fake_popen(command, **kwargs):
-            commands.append(command)
-            target = command[command.index("-o") + 1].replace("%(ext)s", "webm")
-            Path(target).write_bytes(b"audio")
-            return FakeProcess(stderr_file=kwargs["stderr"])
-
-        upload.download_foreign = self.real_download_foreign
-        upload.subprocess.Popen = fake_popen
-        original_browser = tracklist.current_browser
-        tracklist.current_browser = lambda: "firefox"
-        self.addCleanup(setattr, tracklist, "current_browser", original_browser)
-        self.adopt()
-        self.adopt()
-        self.assertEqual(len(self.uploaded), 1)
-        self.assertEqual(len(commands), 1)
+    def test_a_foreign_video_without_a_copy_still_has_its_upload_ahead(self):
+        job = self.plan()
+        self.assertEqual((job.original_id, job.copy, job.own, job.title), ("orig1234567", None, True, "Set ajeno"))
+        self.assertEqual(self.calls, ["client"])
 
     def test_a_copy_already_uploaded_is_reused_even_after_the_download_was_deleted(self):
         upload.remember(upload.remote_key("orig1234567"), "copia123456")
-        self.assertEqual(self.adopt(), ("copia123456", None, "Set ajeno", True))
-        self.assertEqual((self.uploaded, self.downloads), ([], 0))
+        job = self.plan()
+        self.assertEqual((job.copy, job.own, job.audio, job.title), ("copia123456", True, None, "Set ajeno"))
+        self.assertIn("Already uploaded as https://youtu.be/copia123456", self.reports)
+
+    def test_a_known_copy_hands_over_the_download_that_is_still_on_disk(self):
+        upload.remember(upload.remote_key("orig1234567"), "copia123456")
+        upload.downloads_dir().mkdir(parents=True)
+        kept = upload.downloads_dir() / "orig1234567.webm"
+        kept.write_bytes(b"audio")
+        self.assertEqual(self.plan().audio, kept)
+
+    def test_a_new_local_recording_is_its_own_audio(self):
+        source = self.root / "Spook Multiespacio 3.m4a"
+        source.write_bytes(b"audio")
+        job = self.plan(None, source)
+        self.assertEqual((job.local, job.audio, job.copy, job.own), (source, source, None, True))
+
+    def test_a_local_recording_uploaded_before_is_not_uploaded_again(self):
+        source = self.root / "Spook Multiespacio 3.m4a"
+        source.write_bytes(b"audio")
+        upload.remember_upload(source, "vid12345678")
+        job = self.plan(None, source)
+        self.assertEqual(job.copy, "vid12345678")
+        self.assertIn("Already uploaded as https://youtu.be/vid12345678", self.reports)
 
     def test_without_a_google_login_it_keeps_working_with_shazam_alone(self):
         self.client_error = SystemExit("Falta la credencial")
-        self.assertEqual(self.adopt(), ("orig1234567", None, None, False))
-        self.assertTrue(any("Shazam only" in message for message in self.messages))
+        job = self.plan()
+        self.assertEqual((job.original_id, job.copy, job.own), ("orig1234567", None, False))
+        self.assertTrue(any("Shazam only" in message for message in self.reports))
 
     def test_an_account_without_a_channel_keeps_working_with_shazam_alone(self):
         def no_channel(client, video_id):
             raise SystemExit("Tu cuenta de Google no tiene canal de YouTube")
 
         upload.video_owner = no_channel
-        self.assertEqual(self.adopt(), ("orig1234567", None, None, False))
-        self.assertTrue(any("Shazam only" in message for message in self.messages))
+        job = self.plan()
+        self.assertEqual((job.copy, job.own), (None, False))
+        self.assertTrue(any("Shazam only" in message for message in self.reports))
 
     def test_an_api_error_while_checking_ownership_falls_back_to_shazam(self):
         from googleapiclient.errors import HttpError
@@ -2087,51 +2051,230 @@ class AdoptTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
             raise HttpError(mock.Mock(status=403, reason="quota"), b"quotaExceeded")
 
         upload.video_owner = failing
-        self.assertEqual(self.adopt(), ("orig1234567", None, None, False))
-        self.assertTrue(any("Shazam only" in message for message in self.messages))
+        job = self.plan()
+        self.assertEqual((job.copy, job.own), (None, False))
+        self.assertTrue(any("Shazam only" in message for message in self.reports))
+
+
+class RunStepsTest(StepFakes, unittest.TestCase):
+    def setUp(self):
+        super().setUp()
+        self.events = []
+        self.source = self.root / "Spook Multiespacio 3.m4a"
+        self.source.write_bytes(b"audio")
+
+    def foreign(self, **changes):
+        fields = dict(original_id="orig1234567", title="Set ajeno", local=None, copy=None, own=True, audio=None)
+        return upload.Job(**{**fields, **changes})
+
+    def local(self, **changes):
+        fields = dict(original_id=None, title=None, local=self.source, copy=None, own=True, audio=self.source)
+        return upload.Job(**{**fields, **changes})
+
+    def run_steps(self, job):
+        return upload.run_steps(job, self.events.append, threading.Event())
+
+    def test_a_foreign_video_is_downloaded_converted_uploaded_and_placed_in_order(self):
+        outcome = self.run_steps(self.foreign())
+        self.assertEqual(self.calls, ["download", ("convert", 600), "client", "upload", ("place", "copia123456", 600)])
+        self.assertEqual(self.uploaded_titles, ["Set ajeno"])
+        self.assertEqual(outcome, upload.Outcome("copia123456", upload.downloads_dir() / "orig1234567.webm", True, 600))
+        self.assertIn(("step-done", "upload", "copia123456"), self.events)
+
+    def test_the_upload_is_remembered_before_the_audio_is_placed_so_a_crash_does_not_repeat_it(self):
+        def crash(*args, **kwargs):
+            raise RuntimeError("disk full")
+
+        upload.place_audio = crash
+        with self.assertRaises(RuntimeError):
+            self.run_steps(self.foreign())
+        self.assertEqual(upload.load_uploads()[upload.remote_key("orig1234567")], "copia123456")
+
+    def test_a_known_copy_with_its_audio_only_places_the_audio(self):
+        audio = self.root / "orig.webm"
+        audio.write_bytes(b"audio")
+        outcome = self.run_steps(self.foreign(copy="copia123456", audio=audio))
+        self.assertEqual(self.calls, [("place", "copia123456", 600)])
+        self.assertEqual(outcome, upload.Outcome("copia123456", audio, True, 600))
+
+    def test_a_known_copy_without_audio_runs_nothing(self):
+        outcome = self.run_steps(self.foreign(copy="copia123456"))
+        self.assertEqual((self.calls, outcome), ([], upload.Outcome("copia123456", None, True, None)))
+
+    def test_my_own_video_runs_nothing(self):
+        outcome = self.run_steps(self.foreign(copy="orig1234567"))
+        self.assertEqual((self.calls, outcome), ([], upload.Outcome("orig1234567", None, True, None)))
+
+    def test_a_shazam_only_job_runs_nothing(self):
+        outcome = self.run_steps(self.foreign(own=False))
+        self.assertEqual((self.calls, outcome), ([], upload.Outcome("orig1234567", None, False, None)))
 
     def test_a_video_that_cannot_be_downloaded_falls_back_to_shazam(self):
-        upload.download_foreign = lambda video_id: None
-        self.assertEqual(self.adopt(), ("orig1234567", None, "Set ajeno", False))
-        self.assertIn("Could not download the video: continuing with Shazam only", self.messages)
+        self.download_result = None
+        outcome = self.run_steps(self.foreign())
+        self.assertEqual(outcome, upload.Outcome("orig1234567", None, False, None))
+        self.assertIn(("warning", "Could not download the video: continuing with Shazam only"), self.events)
+        self.assertEqual(self.calls, ["download"])
 
-    def test_an_exhausted_quota_falls_back_to_shazam_instead_of_stopping(self):
+    def test_an_exhausted_quota_falls_back_to_shazam_but_keeps_the_download(self):
         self.quota_error = True
-        video_id, _, title, own = self.adopt()
-        self.assertEqual((video_id, title, own), ("orig1234567", "Set ajeno", False))
-        self.assertIn("YouTube upload quota used up: continuing with Shazam only", self.messages)
+        outcome = self.run_steps(self.foreign())
+        self.assertEqual(outcome, upload.Outcome("orig1234567", upload.downloads_dir() / "orig1234567.webm", False, 600))
+        self.assertIn(("warning", "YouTube upload quota used up: continuing with Shazam only"), self.events)
+        self.assertEqual(upload.load_uploads(), {})
 
-    def test_an_exhausted_quota_still_hands_over_the_download_so_shazam_does_not_fetch_it_again(self):
+    def test_an_exhausted_quota_stops_a_local_recording(self):
         self.quota_error = True
-        self.assertEqual(self.adopt()[1], upload.downloads_dir() / "orig1234567.webm")
+        with self.assertRaises(SystemExit) as raised:
+            self.run_steps(self.local())
+        self.assertIn("quota used up", str(raised.exception.code))
+        self.assertIsNone(upload.known_upload(self.source))
 
-    def test_deleting_the_uploaded_copy_also_deletes_the_download(self):
-        video_id, audio, title, own = self.adopt()
-        upload.forget_upload(video_id)
-        self.assertFalse(audio.exists())
-        self.assertFalse(any(key.startswith("youtube:") for key in upload.load_uploads()))
+    def test_a_local_recording_is_titled_after_the_file_and_remembered(self):
+        outcome = self.run_steps(self.local())
+        self.assertEqual(self.uploaded_titles, ["Spook Multiespacio 3"])
+        self.assertEqual(outcome, upload.Outcome("copia123456", self.source, True, 600))
+        self.assertEqual(upload.known_upload(self.source), "copia123456")
 
+    def test_a_known_local_copy_only_places_the_audio(self):
+        self.run_steps(self.local(copy="vid12345678"))
+        self.assertEqual(self.calls, [("place", "vid12345678", 600)])
+
+    def test_cancelling_stops_the_steps_and_remembers_nothing(self):
+        def cancelled(*args, **kwargs):
+            raise upload.Cancelled()
+
+        upload.upload_video = cancelled
+        with self.assertRaises(upload.Cancelled):
+            self.run_steps(self.foreign())
+        self.assertEqual(upload.load_uploads(), {})
+
+
+class TerminalProgressTest(unittest.TestCase):
+    class Stream(io.StringIO):
+        def __init__(self, tty):
+            super().__init__()
+            self.tty = tty
+
+        def isatty(self):
+            return self.tty
+
+    def test_a_terminal_rewrites_one_line_and_ends_it_before_the_next_message(self):
+        stream = self.Stream(True)
+        progress = tracklist.terminal_progress(stream)
+        progress(("step", "upload", 10.0, None))
+        progress(("step", "upload", 55.0, None))
+        progress(("step-done", "upload", "copia123456"))
+        text = stream.getvalue()
+        self.assertEqual(text.count("\r"), 2)
+        self.assertIn("55%", text)
+        self.assertIn("\nUploaded as https://youtu.be/copia123456\n", text)
+
+    def test_a_terminal_starts_a_new_line_when_the_step_changes(self):
+        stream = self.Stream(True)
+        progress = tracklist.terminal_progress(stream)
+        progress(("step", "convert", 100.0, None))
+        progress(("step", "upload", 0.0, None))
+        self.assertIn("100%\x1b[K\n\r", stream.getvalue())
+
+    def test_the_detail_is_shown_next_to_the_percent(self):
+        stream = self.Stream(True)
+        tracklist.terminal_progress(stream)(("step", "download", 40.0, "2.1MiB/s"))
+        self.assertIn("40% 2.1MiB/s", stream.getvalue())
+
+    def test_finishing_ends_a_line_still_being_rewritten(self):
+        stream = self.Stream(True)
+        progress = tracklist.terminal_progress(stream)
+        progress(("step", "audio", 99.0, None))
+        progress.finish()
+        self.assertTrue(stream.getvalue().endswith("\n"))
+
+    def test_a_pipe_gets_one_line_per_step_not_one_per_percent(self):
+        stream = self.Stream(False)
+        progress = tracklist.terminal_progress(stream)
+        for percent in (1.0, 50.0, 100.0):
+            progress(("step", "convert", percent, None))
+        progress(("step", "upload", 3.0, None))
+        self.assertEqual(stream.getvalue(), "Converting to video\nUploading to YouTube\n")
+
+    def test_warnings_get_their_own_line(self):
+        stream = self.Stream(True)
+        progress = tracklist.terminal_progress(stream)
+        progress(("step", "download", 5.0, None))
+        progress(("warning", "Careful"))
+        self.assertTrue(stream.getvalue().endswith("\nCareful\n"))
+
+
+class RunStepsInMainTest(StepFakes, unittest.TestCase):
+    def run_main(self, *flags, video="https://www.youtube.com/watch?v=orig1234567", duration=("--duration", "600")):
+        self.deleted = []
+        errors = io.StringIO()
+        with mock.patch.object(tracklist, "missing_tools", lambda: []), \
+                mock.patch.object(upload, "offer_delete", self.deleted.append), \
+                mock.patch.object(upload, "wait_until_ready", lambda video_id, report: False), \
+                mock.patch.object(tracklist, "try_claims", lambda video_id, own: (None, [], None)), \
+                mock.patch.object(tracklist, "fetch_videos", lambda ids, session: {}), \
+                mock.patch("sys.argv", ["tracklist", video, "--no-recognize", *duration, *flags]), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(errors):
+            tracklist.main()
+        return errors.getvalue()
+
+    def test_relaunching_with_a_known_copy_neither_downloads_nor_uploads(self):
+        upload.remember(upload.remote_key("orig1234567"), "copia123456")
+        self.run_main()
+        self.assertNotIn("download", self.calls)
+        self.assertNotIn("upload", self.calls)
+
+    def test_ctrl_c_during_the_steps_tells_how_to_resume_and_offers_no_delete(self):
+        def interrupted(job, progress, stop):
+            raise KeyboardInterrupt
+
+        with mock.patch.object(upload, "run_steps", interrupted), self.assertRaises(SystemExit) as raised:
+            self.run_main()
+        self.assertIn("run 'tracklist https://www.youtube.com/watch?v=orig1234567' again", str(raised.exception.code))
+        self.assertEqual(self.deleted, [])
+
+    def test_fresh_clears_the_cache_of_the_known_copy(self):
+        upload.remember(upload.remote_key("orig1234567"), "copia123456")
+        tracklist.mark_content_id_done("copia123456")
+        self.run_main("--fresh")
+        self.assertFalse(tracklist.load_cache("copia123456")["content_id_done"])
+
+    def test_a_saved_claims_file_still_prepares_a_local_recording(self):
+        source = self.root / "set.m4a"
+        source.write_bytes(b"audio")
+        saved = self.root / "claims.json"
+        saved.write_text(json.dumps({"receivedClaims": [{
+            "matchDetails": {"longestMatchStartTimeSeconds": 0, "longestMatchDurationSeconds": 300},
+            "asset": {"metadata": {"soundRecording": {"title": "T", "artists": ["A"]}}},
+        }]}))
+        self.run_main("--from-json", str(saved), video=str(source))
+        self.assertIn("upload", self.calls)
+
+    def test_the_duration_of_the_audio_is_used_when_none_is_given(self):
+        upload.remember(upload.remote_key("orig1234567"), "copia123456")
+        upload.downloads_dir().mkdir(parents=True)
+        (upload.downloads_dir() / "orig1234567.webm").write_bytes(b"audio")
+        upload.local_duration = lambda source: 1234
+        seen = []
+        with mock.patch.object(tracklist, "find_gaps", lambda entries, duration: seen.append(duration) or []), \
+                mock.patch.object(tracklist, "scan_gaps", lambda duration: seen.append(duration) or []):
+            with self.assertRaises(SystemExit):
+                self.run_main(duration=())
+        self.assertEqual(seen, [1234])
+
+
+class TracklistPointsToOriginalTest(unittest.TestCase):
     def test_the_tracklist_points_to_the_original_video_not_the_copy(self):
-        names = ("adopt", "offer_delete")
-        original = {name: getattr(upload, name) for name in names}
-        original_tracklist = {name: getattr(tracklist, name) for name in ("try_claims", "fetch_videos", "missing_tools")}
-        upload.adopt = lambda video_id, report: ("copia123456", None, "Set", True)
-        upload.offer_delete = lambda video_id: None
-        tracklist.missing_tools = lambda: []
-        tracklist.try_claims = lambda video_id, own: (None, [{"start": 0, "duration": 60, "title": "Tema", "artist": "A"}], None)
-        tracklist.fetch_videos = lambda ids, session: {}
-
-        def restore():
-            for name, value in original.items():
-                setattr(upload, name, value)
-            for name, value in original_tracklist.items():
-                setattr(tracklist, name, value)
-
-        self.addCleanup(restore)
         output = io.StringIO()
-        with mock.patch("sys.argv", ["tracklist", "orig1234567", "--no-recognize", "--duration", "600"]):
-            with contextlib.redirect_stdout(output):
-                tracklist.main()
+        with fake_job("copia123456", "Set", True), \
+                mock.patch.object(upload, "offer_delete", lambda video_id: None), \
+                mock.patch.object(tracklist, "missing_tools", lambda: []), \
+                mock.patch.object(tracklist, "try_claims", lambda video_id, own: (None, [{"start": 0, "duration": 60, "title": "Tema", "artist": "A"}], None)), \
+                mock.patch.object(tracklist, "fetch_videos", lambda ids, session: {}), \
+                mock.patch("sys.argv", ["tracklist", "orig1234567", "--no-recognize", "--duration", "600"]), \
+                contextlib.redirect_stdout(output):
+            tracklist.main()
         self.assertIn("watch?v=orig1234567", output.getvalue())
         self.assertIn("Set", output.getvalue())
         self.assertNotIn("copia123456", output.getvalue())
@@ -2143,19 +2286,19 @@ class FromJsonTest(unittest.TestCase):
             "matchDetails": {"longestMatchStartTimeSeconds": 0, "longestMatchDurationSeconds": 300},
             "asset": {"metadata": {"soundRecording": {"title": "Kisses of Fire", "artists": ["La Luna"]}}},
         }]}
-        adopted = []
+        planned = []
         output = io.StringIO()
         with tempfile.TemporaryDirectory() as tmp:
             saved = Path(tmp) / "claims.json"
             saved.write_text(json.dumps(claim))
             with mock.patch.object(tracklist, "missing_tools", lambda: []), \
-                    mock.patch.object(upload, "adopt", lambda video_id, report: adopted.append(video_id)), \
+                    mock.patch.object(upload, "plan_job", lambda *args, **kwargs: planned.append(args)), \
                     mock.patch.object(upload, "offer_delete", lambda video_id: None), \
                     mock.patch("sys.argv", ["tracklist", "orig1234567", "--from-json", str(saved),
                                             "--no-recognize", "--duration", "600"]), \
                     contextlib.redirect_stdout(output):
                 tracklist.main()
-        self.assertEqual(adopted, [])
+        self.assertEqual(planned, [])
         self.assertIn("La Luna - Kisses of Fire", output.getvalue())
         self.assertIn("watch?v=orig1234567", output.getvalue())
 
@@ -2474,7 +2617,7 @@ class TuiWaitInMainTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
 
         errors = io.StringIO()
         with mock.patch.object(tracklist, "missing_tools", lambda: []), \
-                mock.patch.object(upload, "adopt", lambda video_id, report: ("copia123456", None, "Set", True)), \
+                fake_job("copia123456", "Set", True), \
                 mock.patch.object(upload, "wait_until_ready", lambda video_id, report: self.calls["terminal_wait"].append(video_id) or waited), \
                 mock.patch.object(upload, "offer_delete", self.calls["deleted"].append), \
                 mock.patch.object(tracklist, "render", lambda *args: self.calls["render"].append(args) or ""), \

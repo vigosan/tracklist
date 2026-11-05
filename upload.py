@@ -8,6 +8,7 @@ import tempfile
 import threading
 import time
 import webbrowser
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -399,54 +400,88 @@ def upload_video(client, path, title, progress=None, stop=None):
     return response["id"]
 
 
-def prepare(path, report, title=None, on_uploaded=None):
-    client = youtube_client()
-    video_id = known_upload(path)
-    if video_id:
-        report(t("already_uploaded", video_id=video_id))
-    else:
-        with tempfile.TemporaryDirectory() as tmp:
-            video = Path(tmp) / f"{path.stem}.mp4"
-            report(t("converting"))
-            convert_to_video(path, video)
-            report(t("uploading"))
-            video_id = upload_video(client, video, title or path.stem)
-        remember_upload(path, video_id)
-        report(t("uploaded", video_id=video_id))
-    if on_uploaded:
-        on_uploaded(video_id)
-    return video_id
+@dataclass
+class Job:
+    original_id: str | None
+    title: str | None
+    local: Path | None
+    copy: str | None
+    own: bool
+    audio: Path | None
 
 
-def adopt(video_id, report):
+@dataclass
+class Outcome:
+    video_id: str
+    audio: Path | None
+    own: bool
+    duration: int | None
+
+
+def plan_job(video_id=None, local=None, report=print_stderr):
+    if local:
+        youtube_client()
+        copy = known_upload(local)
+        if copy:
+            report(t("already_uploaded", video_id=copy))
+        return Job(None, None, local, copy, True, local)
+    shazam_only = Job(video_id, None, None, None, False, None)
     try:
         client = youtube_client()
     except SystemExit as error:
         report(f"{error}\n{t('shazam_only')}")
-        return video_id, None, None, False
+        return shazam_only
     from googleapiclient.errors import HttpError
 
     try:
         mine, title = video_owner(client, video_id)
     except (SystemExit, HttpError) as error:
         report(f"{error}\n{t('shazam_only')}")
-        return video_id, None, None, False
+        return shazam_only
     if mine:
-        return video_id, None, None, True
+        return Job(video_id, None, None, video_id, True, None)
     copy = load_uploads().get(remote_key(video_id))
     if copy:
         report(t("already_uploaded", video_id=copy))
-        return copy, downloaded_audio(video_id), title, True
-    audio = download_foreign(video_id)
-    if audio is None:
-        report(t("download_failed_shazam"))
-        return video_id, None, title, False
-    try:
-        uploaded = prepare(audio, report, title, lambda copy: remember(remote_key(video_id), copy))
-    except QuotaExceeded:
-        report(t("quota_shazam"))
-        return video_id, audio, title, False
-    return uploaded, audio, title, True
+        return Job(video_id, title, None, copy, True, downloaded_audio(video_id))
+    return Job(video_id, title, None, None, True, None)
+
+
+def upload_copy(job, audio, duration, progress, stop):
+    with tempfile.TemporaryDirectory() as tmp:
+        name = job.local.stem if job.local else job.original_id
+        video = Path(tmp) / f"{name}.mp4"
+        convert_to_video(audio, video, duration, progress, stop)
+        return upload_video(youtube_client(), video, job.title or name, progress, stop)
+
+
+def run_steps(job, progress, stop):
+    if not job.own:
+        return Outcome(job.original_id, None, False, None)
+    audio, copy, duration = job.audio, job.copy, None
+    if copy is None:
+        if audio is None:
+            audio = download_foreign(job.original_id, progress, stop)
+            if audio is None:
+                progress(("warning", t("download_failed_shazam")))
+                return Outcome(job.original_id, None, False, None)
+        duration = local_duration(audio)
+        try:
+            copy = upload_copy(job, audio, duration, progress, stop)
+        except QuotaExceeded:
+            if job.local:
+                sys.exit(t("quota_exhausted"))
+            progress(("warning", t("quota_shazam")))
+            return Outcome(job.original_id, audio, False, duration)
+        if job.local:
+            remember_upload(job.local, copy)
+        else:
+            remember(remote_key(job.original_id), copy)
+        progress(("step-done", "upload", copy))
+    if audio:
+        duration = duration or local_duration(audio)
+        place_audio(audio, copy, duration, progress, stop)
+    return Outcome(copy, audio, True, duration)
 
 
 def delete_video(client, video_id):

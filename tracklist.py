@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -654,6 +655,39 @@ def notify_ready(title, run=subprocess.run):
         pass
 
 
+def terminal_progress(stream=sys.stderr):
+    labels = {"download": "step_download", "convert": "converting", "upload": "uploading", "audio": "step_audio"}
+    state = {"step": None, "open": False}
+
+    def close_line():
+        if state["open"]:
+            stream.write("\n")
+            state["open"] = False
+
+    def progress(event):
+        if event[0] == "step":
+            _, name, percent, detail = event
+            label = t(labels[name])
+            if stream.isatty():
+                if name != state["step"]:
+                    close_line()
+                text = " ".join(part for part in (label, None if percent is None else f"{percent:.0f}%", detail) if part)
+                stream.write(f"\r{text}\x1b[K")
+                state["open"] = True
+            elif name != state["step"]:
+                stream.write(f"{label}\n")
+            state["step"] = name
+        else:
+            close_line()
+            state["step"] = None
+            stream.write(t("uploaded", video_id=event[2]) if event[0] == "step-done" else event[1])
+            stream.write("\n")
+        stream.flush()
+
+    progress.finish = close_line
+    return progress
+
+
 def main():
     absent = missing_tools()
     if absent:
@@ -678,23 +712,30 @@ def main():
         print(message, file=sys.stderr)
 
     local = local_file(args.video)
-    original_id = None
+    original_id = None if local else parse_video_id(args.video)
+    job = None
+    if local or not args.from_json:
+        job = upload.plan_job(original_id, local, report)
     original_title = None
-    if local:
+    if job:
+        cached = job.copy or job.original_id
+        if args.fresh and cached:
+            clear_cache(cached)
+        progress = terminal_progress()
         try:
-            video_id = upload.prepare(local, report)
-        except upload.QuotaExceeded:
-            sys.exit(t("quota_exhausted"))
-        audio = local
-        own = True
+            outcome = upload.run_steps(job, progress, threading.Event())
+        except KeyboardInterrupt:
+            sys.exit(t("resume_later", command=args.video))
+        finally:
+            progress.finish()
+        video_id, audio, own = outcome.video_id, outcome.audio, outcome.own
+        original_title = job.title
+        args.duration = args.duration or outcome.duration
     else:
-        original_id = parse_video_id(args.video)
         video_id, audio, own = original_id, None, False
-        if not args.from_json:
-            video_id, audio, original_title, own = upload.adopt(original_id, report)
+        if args.fresh:
+            clear_cache(video_id)
     shown_id = original_id or video_id
-    if args.fresh:
-        clear_cache(video_id)
     waiting = not args.from_json and upload.needs_wait(video_id)
     import recognize_ui
 
@@ -705,10 +746,6 @@ def main():
                 notify_ready(original_title)
         except KeyboardInterrupt:
             sys.exit(t("resume_later", command=args.video))
-    if audio:
-        upload.place_audio(audio, video_id)
-        args.duration = args.duration or upload.local_duration(audio)
-
     if tui:
         import recognize_tui
 
