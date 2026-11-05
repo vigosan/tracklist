@@ -1037,6 +1037,49 @@ class BrowserTest(unittest.TestCase):
         self.assertEqual(json.loads(tracklist.CONFIG_FILE.read_text()), {"browser": "chrome", "otra": 1})
 
 
+class BrowserFallbackTest(unittest.TestCase):
+    install = BrowserTest.install
+
+    def setUp(self):
+        BrowserTest.setUp(self)
+        original = tracklist.browser_flag
+        self.addCleanup(setattr, tracklist, "browser_flag", original)
+        tracklist.browser_flag = None
+        tracklist.save_browser("brave")
+        self.install("Brave Browser.app", "Safari.app")
+        self.reads = []
+
+        def read(browser):
+            self.reads.append(browser)
+            return {"SAPISID": "x", "__Secure-1PAPISID": "y", "__Secure-3PAPISID": "z"} if browser == "safari" else {}
+
+        tracklist.browser_cookies = read
+
+    def test_a_saved_browser_that_lost_its_session_gives_way_to_one_that_has_it(self):
+        session = tracklist.fresh_session()
+        self.assertIn("SAPISID=x", session["headers"]["cookie"])
+        self.assertEqual(tracklist.current_browser(), "safari")
+
+    def test_the_browser_that_took_over_is_read_only_once_so_the_keychain_asks_once(self):
+        tracklist.fresh_session()
+        self.assertEqual(self.reads, ["brave", "safari"])
+
+    def test_without_another_signed_in_browser_the_saved_one_is_named_with_the_way_out(self):
+        tracklist.browser_cookies = lambda browser: {}
+        with self.assertRaises(SystemExit) as stop:
+            tracklist.fresh_session()
+        self.assertIn("brave", str(stop.exception.code))
+        self.assertIn("--browser", str(stop.exception.code))
+        self.assertEqual(tracklist.current_browser(), "brave")
+
+    def test_a_browser_named_with_the_flag_is_never_swapped_for_another(self):
+        tracklist.browser_flag = "brave"
+        with self.assertRaises(SystemExit) as stop:
+            tracklist.fresh_session()
+        self.assertIn("brave", str(stop.exception.code))
+        self.assertEqual(tracklist.current_browser(), "brave")
+
+
 class ScanPhaseLabelTest(unittest.TestCase):
     def test_the_probe_phase_explains_it_is_reading_the_video(self):
         self.assertEqual(recognize_tui.phase_label("probe"), "Reading video length...")

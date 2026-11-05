@@ -36,6 +36,7 @@ BROWSERS = {
     "chromium": "Chromium.app",
 }
 APP_DIRS = [Path("/Applications"), Path.home() / "Applications"]
+browser_flag = None
 CACHE_DIR = Path.home() / ".config" / "tracklist" / "cache"
 AUDIO_DIR = Path.home() / "Library" / "Caches" / "tracklist"
 MIN_GAP_SECONDS = 90
@@ -204,9 +205,27 @@ def studio_session(cookies, timestamp):
     }
 
 
+def signed_in_elsewhere(browser):
+    read = {}
+
+    def cookies_of(candidate):
+        read[candidate] = browser_cookies(candidate)
+        return read[candidate]
+
+    others = [name for name in installed_browsers(APP_DIRS) if name != browser]
+    try:
+        found = pick_browser(others, cookies_of)
+    except SystemExit:
+        return None, {}
+    save_browser(found)
+    return found, read[found]
+
+
 def fresh_session():
     browser = current_browser()
     cookies = browser_cookies(browser)
+    if "SAPISID" not in cookies and browser_flag is None:
+        _, cookies = signed_in_elsewhere(browser)
     if "SAPISID" not in cookies:
         sys.exit(t("browser_signed_out", browser=browser))
     return studio_session(cookies, int(time.time()))
@@ -698,6 +717,8 @@ def main():
     args = parser.parse_args()
 
     if args.browser:
+        global browser_flag
+        browser_flag = args.browser
         save_browser(args.browser)
     if not args.video and sys.stdin.isatty() and sys.stderr.isatty():
         print(t("ask_video"), end="", file=sys.stderr, flush=True)
