@@ -1410,7 +1410,7 @@ class UploadVideoTest(unittest.TestCase):
         client = FakeInsertClient(FakeChunkRequest([0.25, 0.5], {"id": "abc"}))
         events = []
         self.assertEqual(upload.upload_video(client, self.path, "Set", events.append), "abc")
-        self.assertEqual(events, [("step", "upload", 25.0, None), ("step", "upload", 50.0, None)])
+        self.assertEqual(events[1:], [("step", "upload", 25.0, None), ("step", "upload", 50.0, None)])
 
     def test_the_upload_is_sent_in_chunks_so_progress_and_cancel_can_happen(self):
         client = FakeInsertClient(FakeChunkRequest([], {"id": "abc"}))
@@ -1424,6 +1424,12 @@ class UploadVideoTest(unittest.TestCase):
         with self.assertRaises(upload.Cancelled):
             upload.upload_video(FakeInsertClient(request), self.path, "Set", stop=stop)
         self.assertEqual(request.chunks, 0)
+
+    def test_the_upload_is_reported_as_started_before_the_first_chunk_is_sent(self):
+        events, seen = [], []
+        request = FakeChunkRequest([], {"id": "abc"}, lambda: seen.append(list(events)))
+        upload.upload_video(FakeInsertClient(request), self.path, "Set", events.append)
+        self.assertEqual(seen[0], [("step", "upload", 0.0, None)])
 
     def test_stopping_an_upload_stops_between_chunks(self):
         stop = threading.Event()
@@ -2844,6 +2850,37 @@ class TuiStepsTest(IsolatedCache, unittest.TestCase):
         self.assertTrue(self.seen["stopped"])
         self.assertTrue(self.seen["thread_done"])
         self.assertTrue(result.interrupted)
+
+    def test_quitting_once_the_upload_is_done_stops_without_asking_even_though_the_status_still_says_uploading(self):
+        async def quit_app(app, pilot):
+            await pilot.press("q")
+            await pilot.pause()
+            self.seen["log"] = self.logged(app)
+            self.seen["stop_set"] = self.seen["stop"].is_set()
+            await app.workers.wait_for_complete()
+
+        result, _ = self.run_steps_app(
+            [("step", "upload", 90.0, None), ("step-done", "upload", self.COPY)],
+            None, hold="Uploading", during=quit_app,
+        )
+        self.assertTrue(self.seen["stop_set"])
+        self.assertIn("Stopping...", self.seen["log"])
+        self.assertTrue(result.interrupted)
+
+    def test_a_quit_question_is_dropped_when_the_steps_end_so_the_other_keys_work_again(self):
+        async def ask_then_end(app, pilot):
+            await pilot.press("q")
+            await pilot.pause()
+            self.seen["pending_while_asking"] = app.pending
+            app.stop.set()
+            await app.workers.wait_for_complete()
+            self.seen["pending_after"] = app.pending
+
+        self.run_steps_app(
+            [("step", "upload", 20.0, None)], None, hold="Uploading", during=ask_then_end,
+        )
+        self.assertEqual(self.seen["pending_while_asking"], "quit")
+        self.assertIsNone(self.seen["pending_after"])
 
     def test_a_spanish_system_asks_before_abandoning_the_upload_and_says_it_is_stopping(self):
         with mock.patch.object(messages, "LANGUAGE", "es"):

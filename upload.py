@@ -387,6 +387,8 @@ def upload_video(client, path, title, progress=None, stop=None):
     request = client.videos().insert(part="snippet,status", body=body, media_body=media)
     try:
         response = None
+        if progress:
+            progress(("step", "upload", 0.0, None))
         while response is None:
             if stop and stop.is_set():
                 raise Cancelled()

@@ -141,6 +141,7 @@ def run_app(video_id, duration, label, own=False, waiting=False, job=None, shown
             self.stop = threading.Event()
             self.was_waiting = waiting
             self.steps_running = False
+            self.uploading = False
             self.steps_pending = job is not None
             self.own = own
             self.waiting = waiting
@@ -253,6 +254,9 @@ def run_app(video_id, duration, label, own=False, waiting=False, job=None, shown
                 return
             finally:
                 self.steps_running = False
+                self.uploading = False
+                if self.pending == "quit":
+                    self.pending = None
             self.job = None
             self.steps_pending = False
             self.video_id = outcome.video_id
@@ -340,8 +344,11 @@ def run_app(video_id, duration, label, own=False, waiting=False, job=None, shown
                 _, name, percent, detail = event
                 if self.state.get("phase") != name:
                     self.log_line(phase_label(name))
+                if name == "upload":
+                    self.uploading = True
                 self.state.update(phase=name, step_percent=percent, step_detail=detail)
             elif kind == "step-done":
+                self.uploading = False
                 self.log_line(t("uploaded", video_id=event[2]))
             elif kind == "warning":
                 self.log_line(event[1])
@@ -470,7 +477,7 @@ def run_app(video_id, duration, label, own=False, waiting=False, job=None, shown
             if not self.steps_running:
                 self.exit()
                 return
-            if self.state.get("phase") != "upload":
+            if not self.uploading:
                 await self.stop_steps_and_exit()
                 return
             if self.pending != "quit":
