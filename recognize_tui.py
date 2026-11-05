@@ -250,6 +250,8 @@ def run_app(video_id, duration, label, own=False, waiting=False, job=None, shown
             self.steps_running = True
             try:
                 outcome = await asyncio.to_thread(upload.run_steps, self.job, forward, self.stop)
+                if self.stop.is_set():
+                    return
             except upload.Cancelled:
                 return
             finally:

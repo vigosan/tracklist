@@ -2643,7 +2643,7 @@ class TuiStepsTest(IsolatedCache, unittest.TestCase):
     ORIGINAL = "orig1234567"
     COPY = "copia123456"
 
-    def run_steps_app(self, script, outcome, waiting_after=False, inspect=None, keys=(), hold=None, during=None, job=None, after_keys=()):
+    def run_steps_app(self, script, outcome, waiting_after=False, inspect=None, keys=(), hold=None, during=None, job=None, after_keys=(), ignore_stop=False):
         from textual.app import App
 
         release = threading.Event()
@@ -2662,6 +2662,9 @@ class TuiStepsTest(IsolatedCache, unittest.TestCase):
             self.seen["stop"] = stop
             for event in script:
                 progress(event)
+            if ignore_stop:
+                stop.wait(5)
+                return outcome
             if hold:
                 self.seen["stopped"] = stop.wait(5)
                 time.sleep(0.2)
@@ -2682,6 +2685,14 @@ class TuiStepsTest(IsolatedCache, unittest.TestCase):
             return []
 
         def drive(app, *args, **kwargs):
+            original_exit = app.exit
+
+            def exit_noting_the_thread(*args, **kwargs):
+                self.seen.setdefault("done_at_exit", self.seen.get("thread_done", False))
+                return original_exit(*args, **kwargs)
+
+            app.exit = exit_noting_the_thread
+
             async def scenario():
                 async with app.run_test() as pilot:
                     if during:
@@ -2816,9 +2827,24 @@ class TuiStepsTest(IsolatedCache, unittest.TestCase):
         )
         self.assertTrue(self.seen["stopped"])
         self.assertTrue(self.seen["thread_done"])
+        self.assertTrue(self.seen["done_at_exit"])
         self.assertIn("Stopping...", self.seen["log"])
         self.assertTrue(result.interrupted)
         self.assertIsNone(result.error)
+        self.assertEqual(recognized, [])
+        self.assertEqual(self.checked, [])
+
+    def test_a_stop_that_lands_as_the_steps_finish_counts_as_leaving_early(self):
+        async def quit_app(app, pilot):
+            await pilot.press("q")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+
+        result, recognized = self.run_steps_app(
+            [("step", "download", 30.0, None)], upload.Outcome(self.COPY, None, True, 600),
+            hold="Downloading", during=quit_app, ignore_stop=True,
+        )
+        self.assertTrue(result.interrupted)
         self.assertEqual(recognized, [])
         self.assertEqual(self.checked, [])
 
