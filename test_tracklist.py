@@ -2151,6 +2151,13 @@ class RunStepsTest(StepFakes, unittest.TestCase):
         self.run_steps(self.local(copy="vid12345678"))
         self.assertEqual(self.calls, [("place", "vid12345678", 600)])
 
+    def test_deleting_the_uploaded_copy_also_forgets_it_and_deletes_the_download(self):
+        outcome = self.run_steps(self.foreign())
+        self.assertTrue(outcome.audio.exists())
+        upload.forget_upload(outcome.video_id)
+        self.assertFalse(outcome.audio.exists())
+        self.assertEqual(upload.load_uploads(), {})
+
     def test_cancelling_stops_the_steps_and_remembers_nothing(self):
         def cancelled(*args, **kwargs):
             raise upload.Cancelled()
