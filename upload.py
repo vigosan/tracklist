@@ -173,6 +173,10 @@ def wait_until_ready(video_id, report):
     return True
 
 
+def needs_wait(video_id):
+    return video_id in load_uploads().values() and not tracklist.load_cache(video_id)["content_id_done"]
+
+
 def file_hash(path):
     with path.open("rb") as handle:
         return hashlib.file_digest(handle, "sha256").hexdigest()
@@ -322,7 +326,6 @@ def prepare(path, report, title=None, on_uploaded=None):
         report(t("uploaded", video_id=video_id))
     if on_uploaded:
         on_uploaded(video_id)
-    wait_until_ready(video_id, report)
     return video_id
 
 
@@ -344,7 +347,6 @@ def adopt(video_id, report):
     copy = load_uploads().get(remote_key(video_id))
     if copy:
         report(t("already_uploaded", video_id=copy))
-        wait_until_ready(copy, report)
         return copy, downloaded_audio(video_id), title, True
     audio = download_foreign(video_id)
     if audio is None:

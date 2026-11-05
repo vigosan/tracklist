@@ -686,6 +686,11 @@ def main():
     shown_id = original_id or video_id
     if args.fresh:
         clear_cache(video_id)
+    if not args.from_json and upload.needs_wait(video_id):
+        try:
+            upload.wait_until_ready(video_id, report)
+        except KeyboardInterrupt:
+            sys.exit(t("resume_later", command=args.video))
     if audio:
         upload.place_audio(audio, video_id)
         args.duration = args.duration or upload.local_duration(audio)

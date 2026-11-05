@@ -1572,17 +1572,71 @@ class UploadRegistryTest(IsolatedUploads, unittest.TestCase):
         self.assertIsNone(upload.known_upload(source))
 
 
+class NeedsWaitTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
+    def test_a_remembered_copy_still_needs_the_wait(self):
+        upload.remember("youtube:orig1234567", "copia123456")
+        self.assertTrue(upload.needs_wait("copia123456"))
+
+    def test_a_copy_whose_wait_finished_does_not_need_it_again(self):
+        upload.remember("youtube:orig1234567", "copia123456")
+        tracklist.mark_content_id_done("copia123456")
+        self.assertFalse(upload.needs_wait("copia123456"))
+
+    def test_my_own_video_never_waits(self):
+        self.assertFalse(upload.needs_wait("orig1234567"))
+
+
+class WaitInMainTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
+    def run_main(self, ready, *flags, video="https://www.youtube.com/watch?v=tZ6YRoNjvPI"):
+        upload.remember("youtube:tZ6YRoNjvPI", "copia123456")
+        deleted = []
+        with mock.patch.object(tracklist, "missing_tools", lambda: []), \
+                mock.patch.object(upload, "adopt", lambda video_id, report: ("copia123456", None, "Set", True)), \
+                mock.patch.object(upload, "wait_until_ready", ready), \
+                mock.patch.object(upload, "offer_delete", deleted.append), \
+                mock.patch.object(tracklist, "try_claims", lambda video_id, own: (None, [], None)), \
+                mock.patch.object(tracklist, "fetch_videos", lambda ids, session: {}), \
+                mock.patch("sys.argv", ["tracklist", video, "--no-recognize", "--duration", "600", *flags]), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            tracklist.main()
+        return deleted
+
+    def test_fresh_on_a_finished_copy_waits_again(self):
+        tracklist.mark_content_id_done("copia123456")
+        calls = []
+        self.run_main(lambda video_id, report: calls.append(video_id) or True, "--fresh")
+        self.assertEqual(calls, ["copia123456"])
+
+    def test_a_finished_copy_does_not_wait_on_relaunch(self):
+        tracklist.mark_content_id_done("copia123456")
+        calls = []
+        self.run_main(lambda video_id, report: calls.append(video_id) or True)
+        self.assertEqual(calls, [])
+
+    def test_ctrl_c_during_the_wait_tells_how_to_resume_and_offers_no_delete(self):
+        def interrupted(video_id, report):
+            raise KeyboardInterrupt
+
+        deleted = []
+        with self.assertRaises(SystemExit) as raised:
+            deleted = self.run_main(interrupted)
+        self.assertIn("run 'tracklist https://www.youtube.com/watch?v=tZ6YRoNjvPI' again", str(raised.exception.code))
+        self.assertEqual(deleted, [])
+
+
 class PrepareTest(IsolatedUploads, unittest.TestCase):
     def setUp(self):
         super().setUp()
         self.source = self.root / "Spook Multiespacio 3.m4a"
         self.source.write_bytes(b"audio")
         self.uploads = []
-        self.waits = []
         self.upload_error = None
         names = ("youtube_client", "convert_to_video", "upload_video",
-                 "wait_until_ready")
+                 "wait_for_processing", "wait_for_claims")
         original = {name: getattr(upload, name) for name in names}
+
+        def refuse_wait(*args, **kwargs):
+            raise AssertionError("upload must not wait")
 
         def fake_upload(client, path, title):
             if self.upload_error:
@@ -1593,7 +1647,8 @@ class PrepareTest(IsolatedUploads, unittest.TestCase):
         upload.youtube_client = lambda: "client"
         upload.convert_to_video = lambda source, target: target.write_bytes(b"mp4")
         upload.upload_video = fake_upload
-        upload.wait_until_ready = lambda video_id, report: self.waits.append(video_id) or True
+        upload.wait_for_processing = refuse_wait
+        upload.wait_for_claims = refuse_wait
 
         def restore():
             for name, value in original.items():
@@ -1605,11 +1660,10 @@ class PrepareTest(IsolatedUploads, unittest.TestCase):
         self.assertEqual(upload.prepare(self.source, lambda message: None), "vid12345678")
         self.assertEqual(self.uploads, ["Spook Multiespacio 3"])
 
-    def test_relaunching_after_an_interrupted_wait_does_not_upload_twice(self):
+    def test_relaunching_does_not_upload_twice(self):
         upload.prepare(self.source, lambda message: None)
         upload.prepare(self.source, lambda message: None)
         self.assertEqual(len(self.uploads), 1)
-        self.assertEqual(self.waits, ["vid12345678", "vid12345678"])
 
     def test_a_failed_upload_is_retried_on_the_next_run(self):
         self.upload_error = upload.QuotaExceeded()
@@ -1632,7 +1686,7 @@ class AdoptTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
         self.quota_error = False
         self.messages = []
         names = ("youtube_client", "video_owner", "download_foreign", "convert_to_video",
-                 "upload_video", "wait_until_ready")
+                 "upload_video", "wait_for_processing", "wait_for_claims")
         original = {name: getattr(upload, name) for name in names}
         self.real_download_foreign = upload.download_foreign
         original_run = upload.subprocess.run
@@ -1660,7 +1714,12 @@ class AdoptTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
         upload.download_foreign = fake_download
         upload.convert_to_video = lambda source, target: target.write_bytes(b"mp4")
         upload.upload_video = fake_upload
-        upload.wait_until_ready = lambda video_id, report: True
+
+        def refuse_wait(*args, **kwargs):
+            raise AssertionError("adopt must not wait")
+
+        upload.wait_for_processing = refuse_wait
+        upload.wait_for_claims = refuse_wait
 
         def restore():
             for name, value in original.items():
@@ -1704,11 +1763,8 @@ class AdoptTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
 
     def test_a_copy_already_uploaded_is_reused_even_after_the_download_was_deleted(self):
         upload.remember(upload.remote_key("orig1234567"), "copia123456")
-        waits = []
-        upload.wait_until_ready = lambda video_id, report: waits.append(video_id) or True
         self.assertEqual(self.adopt(), ("copia123456", None, "Set ajeno", True))
         self.assertEqual((self.uploaded, self.downloads), ([], 0))
-        self.assertEqual(waits, ["copia123456"])
 
     def test_without_a_google_login_it_keeps_working_with_shazam_alone(self):
         self.client_error = SystemExit("Falta la credencial")
@@ -1732,15 +1788,6 @@ class AdoptTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
         upload.video_owner = failing
         self.assertEqual(self.adopt(), ("orig1234567", None, None, False))
         self.assertTrue(any("Shazam only" in message for message in self.messages))
-
-    def test_an_interrupted_wait_already_remembers_which_copy_belongs_to_the_original(self):
-        def interrupted(video_id, report):
-            raise SystemExit("Studio no deja leer")
-
-        upload.wait_until_ready = interrupted
-        with self.assertRaises(SystemExit):
-            self.adopt()
-        self.assertEqual(upload.load_uploads()["youtube:orig1234567"], "copia123456")
 
     def test_a_video_that_cannot_be_downloaded_falls_back_to_shazam(self):
         upload.download_foreign = lambda video_id: None
