@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import webbrowser
 from datetime import datetime
@@ -23,6 +24,7 @@ PROCESSING_POLL = 30
 CLAIMS_POLL = 120
 CLAIMS_STABLE_POLLS = 3
 CLAIMS_TIMEOUT = 3600
+TERMINATE_GRACE = 5
 UPLOAD_CHUNK = 8 * 1024 * 1024
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
 LEFTOVER_SUFFIXES = (".part", ".ytdl", ".temp")
@@ -69,22 +71,45 @@ def downloaded_audio(video_id):
     return None
 
 
+def reap(process):
+    if process.poll() is None:
+        process.terminate()
+    try:
+        process.wait(timeout=TERMINATE_GRACE)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+
+
+def terminate_when_stopped(process, stop):
+    while process.poll() is None and not stop.wait(0.1):
+        pass
+    if stop.is_set() and process.poll() is None:
+        process.terminate()
+
+
 def run_tracked(command, parse, progress, stop):
     if stop and stop.is_set():
         raise Cancelled()
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    for line in process.stdout:
-        event = parse(line)
-        if event is not None and progress:
-            progress(event)
+    with tempfile.TemporaryFile(mode="w+") as errors:
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=errors, text=True)
+        if stop:
+            threading.Thread(target=terminate_when_stopped, args=(process, stop), daemon=True).start()
+        try:
+            for line in process.stdout:
+                event = parse(line)
+                if event is not None and progress:
+                    progress(event)
+                if stop and stop.is_set():
+                    break
+        finally:
+            reap(process)
+            process.stdout.close()
         if stop and stop.is_set():
-            process.terminate()
-            process.wait()
             raise Cancelled()
-    process.wait()
-    stderr = process.stderr.read()
-    if process.returncode != 0:
-        raise subprocess.CalledProcessError(process.returncode, command, stderr=stderr)
+        if process.returncode != 0:
+            errors.seek(0)
+            raise subprocess.CalledProcessError(process.returncode, command, stderr=errors.read())
 
 
 def clean_number(text):
@@ -95,9 +120,9 @@ def clean_number(text):
 
 
 def parse_download(line):
-    if not line.startswith("download:"):
+    percent, bar, speed = line.partition("|")
+    if not bar:
         return None
-    percent, _, speed = line.removeprefix("download:").partition("|")
     return ("step", "download", clean_number(percent), ANSI_ESCAPE.sub("", speed).strip() or None)
 
 
@@ -357,11 +382,11 @@ def upload_video(client, path, title, progress=None, stop=None):
     try:
         response = None
         while response is None:
+            if stop and stop.is_set():
+                raise Cancelled()
             status, response = request.next_chunk()
             if status and progress:
                 progress(("step", "upload", status.progress() * 100, None))
-            if response is None and stop and stop.is_set():
-                raise Cancelled()
     except HttpError as error:
         if any(reason in error.content.decode() for reason in QUOTA_REASONS):
             raise QuotaExceeded() from error
