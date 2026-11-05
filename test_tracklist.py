@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import tempfile
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -717,7 +718,10 @@ class IsolatedCache:
 class CacheTest(IsolatedCache, unittest.TestCase):
     def test_missing_cache_reads_as_empty(self):
         cache = tracklist.load_cache("vid12345678")
-        self.assertEqual(cache, {"samples": {}, "title": None, "duration": None})
+        self.assertEqual(
+            cache,
+            {"samples": {}, "title": None, "duration": None, "content_id_done": False},
+        )
 
     def test_saved_samples_survive_a_reload(self):
         match = {"artist": "A", "title": "T"}
@@ -733,6 +737,12 @@ class CacheTest(IsolatedCache, unittest.TestCase):
         cache = tracklist.load_cache("vid12345678")
         self.assertEqual(cache["title"], "Un set")
         self.assertEqual(cache["duration"], 3600)
+
+    def test_saving_a_sample_keeps_the_content_id_mark(self):
+        tracklist.mark_content_id_done("vid12345678")
+        tracklist.save_sample("vid12345678", 15, None)
+        tracklist.save_video_details("vid12345678", "Un set", 3600)
+        self.assertTrue(tracklist.load_cache("vid12345678")["content_id_done"])
 
     def test_each_video_keeps_its_own_samples(self):
         tracklist.save_sample("vid12345678", 15, {"artist": "A", "title": "T"})
@@ -1385,8 +1395,8 @@ class FakeTime:
         return self.now
 
 
-class WaitForClaimsTest(unittest.TestCase):
-    def wait(self, counts, session=True):
+class WaitForClaimsTest(IsolatedCache, unittest.TestCase):
+    def wait(self, counts, session=True, age=0):
         polls = iter(counts)
         original = tracklist.try_claims
         tracklist.try_claims = lambda video_id, own: (
@@ -1397,7 +1407,7 @@ class WaitForClaimsTest(unittest.TestCase):
         time = FakeTime()
         messages = []
         try:
-            upload.wait_for_claims("vid12345678", messages.append, time.sleep, time.clock)
+            upload.wait_for_claims("vid12345678", time.clock() - age, messages.append, time.sleep, time.clock)
         finally:
             tracklist.try_claims = original
         return time, messages
@@ -1412,23 +1422,50 @@ class WaitForClaimsTest(unittest.TestCase):
         self.assertIn("Studio said no", str(stop.exception.code))
         self.assertIn("https://youtu.be/vid12345678", str(stop.exception.code))
 
-    def test_giving_up_tells_the_user_to_retry_later(self):
+    def test_timeout_says_it_continues_and_late_claims_come_on_relaunch(self):
         polls = upload.CLAIMS_TIMEOUT // upload.CLAIMS_POLL + 1
         time, messages = self.wait([0] * polls)
         self.assertEqual(time.now, upload.CLAIMS_TIMEOUT)
-        self.assertIn("again later", messages[-1])
+        self.assertEqual(
+            messages[-1],
+            "Content ID took over an hour: continuing with what it found. "
+            "Run the same command later to pick up late claims",
+        )
+
+    def test_a_copy_uploaded_over_an_hour_ago_does_not_wait(self):
+        time, _ = self.wait([4], age=upload.CLAIMS_TIMEOUT)
+        self.assertEqual(time.sleeps, [])
+        self.assertTrue(tracklist.load_cache("vid12345678")["content_id_done"])
+
+    def test_elapsed_counts_from_the_upload(self):
+        _, messages = self.wait([3, 7, 7, 7], age=600)
+        self.assertIn("10:00", messages[0])
+        self.assertIn("16:00", messages[-1])
+
+    def test_settling_marks_content_id_done(self):
+        self.wait([3, 7, 7, 7])
+        self.assertTrue(tracklist.load_cache("vid12345678")["content_id_done"])
+
+    def test_a_negative_elapsed_counts_as_zero(self):
+        _, messages = self.wait([3, 7, 7, 7], age=-500)
+        self.assertIn("00:00", messages[0])
+
+    def test_claims_elapsed_never_goes_negative(self):
+        self.assertEqual(upload.claims_elapsed(1000, 400), 0)
+        self.assertEqual(upload.claims_elapsed(100, 400.9), 300)
 
 
 class WaitForProcessingTest(unittest.TestCase):
     def wait(self, statuses):
         polls = iter(statuses)
-        original = upload.processing_status
-        upload.processing_status = lambda client, video_id: next(polls)
+        original = upload.processing_details
+        upload.processing_details = lambda client, video_id: (next(polls), 1793872800.0)
         time = FakeTime()
         try:
-            upload.wait_for_processing("client", "vid12345678", lambda message: None, time.sleep)
+            uploaded_at = upload.wait_for_processing("client", "vid12345678", lambda message: None, time.sleep)
         finally:
-            upload.processing_status = original
+            upload.processing_details = original
+        self.uploaded_at = uploaded_at
         return time
 
     def test_claims_are_only_read_after_youtube_finishes_processing(self):
@@ -1439,9 +1476,63 @@ class WaitForProcessingTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.wait(["processing", "failed"])
 
+    def test_the_upload_time_is_handed_on_to_the_claims_wait(self):
+        self.wait(["processing", "succeeded"])
+        self.assertEqual(self.uploaded_at, 1793872800.0)
+
+    def test_processing_details_reads_status_and_upload_time(self):
+        client = mock.Mock()
+        client.videos().list().execute.return_value = {"items": [{
+            "snippet": {"publishedAt": "2026-11-05T10:00:00Z"},
+            "processingDetails": {"processingStatus": "succeeded"},
+        }]}
+        self.assertEqual(upload.processing_details(client, "vid12345678"), ("succeeded", 1793872800.0))
+
+    def test_a_video_youtube_does_not_list_yet_counts_as_processing_since_now(self):
+        client = mock.Mock()
+        client.videos().list().execute.return_value = {}
+        before = time.time()
+        status, uploaded_at = upload.processing_details(client, "vid12345678")
+        self.assertEqual(status, "processing")
+        self.assertGreaterEqual(uploaded_at, before)
+
+    def test_an_unreadable_upload_time_counts_as_now(self):
+        client = mock.Mock()
+        client.videos().list().execute.return_value = {"items": [{
+            "snippet": {"publishedAt": "ayer"},
+            "processingDetails": {"processingStatus": "succeeded"},
+        }]}
+        before = time.time()
+        self.assertGreaterEqual(upload.processing_details(client, "vid12345678")[1], before)
+
+
     def test_a_terminated_upload_stops_instead_of_waiting_forever(self):
         with self.assertRaises(SystemExit):
             self.wait(["processing", "terminated"])
+
+
+class WaitUntilReadyTest(IsolatedCache, unittest.TestCase):
+    def test_a_finished_wait_skips_youtube(self):
+        tracklist.mark_content_id_done("vid12345678")
+        original = upload.youtube_client
+
+        def refuse():
+            raise AssertionError("youtube_client must not be called")
+
+        upload.youtube_client = refuse
+        self.addCleanup(setattr, upload, "youtube_client", original)
+        self.assertFalse(upload.wait_until_ready("vid12345678", lambda message: None))
+
+    def test_an_unfinished_wait_processes_then_reads_claims_from_the_upload_time(self):
+        names = ("youtube_client", "wait_for_processing", "wait_for_claims")
+        original = {name: getattr(upload, name) for name in names}
+        calls = []
+        upload.youtube_client = lambda: "client"
+        upload.wait_for_processing = lambda client, video_id, report: calls.append("processing") or 42.0
+        upload.wait_for_claims = lambda video_id, uploaded_at, report: calls.append(("claims", uploaded_at))
+        self.addCleanup(lambda: [setattr(upload, n, v) for n, v in original.items()])
+        self.assertTrue(upload.wait_until_ready("vid12345678", lambda message: None))
+        self.assertEqual(calls, ["processing", ("claims", 42.0)])
 
 
 class IsolatedUploads:
@@ -1490,7 +1581,7 @@ class PrepareTest(IsolatedUploads, unittest.TestCase):
         self.waits = []
         self.upload_error = None
         names = ("youtube_client", "convert_to_video", "upload_video",
-                 "wait_for_processing", "wait_for_claims")
+                 "wait_until_ready")
         original = {name: getattr(upload, name) for name in names}
 
         def fake_upload(client, path, title):
@@ -1502,8 +1593,7 @@ class PrepareTest(IsolatedUploads, unittest.TestCase):
         upload.youtube_client = lambda: "client"
         upload.convert_to_video = lambda source, target: target.write_bytes(b"mp4")
         upload.upload_video = fake_upload
-        upload.wait_for_processing = lambda client, video_id, report: self.waits.append(("processing", video_id))
-        upload.wait_for_claims = lambda video_id, report: self.waits.append(("claims", video_id))
+        upload.wait_until_ready = lambda video_id, report: self.waits.append(video_id) or True
 
         def restore():
             for name, value in original.items():
@@ -1519,7 +1609,7 @@ class PrepareTest(IsolatedUploads, unittest.TestCase):
         upload.prepare(self.source, lambda message: None)
         upload.prepare(self.source, lambda message: None)
         self.assertEqual(len(self.uploads), 1)
-        self.assertEqual(self.waits[-2:], [("processing", "vid12345678"), ("claims", "vid12345678")])
+        self.assertEqual(self.waits, ["vid12345678", "vid12345678"])
 
     def test_a_failed_upload_is_retried_on_the_next_run(self):
         self.upload_error = upload.QuotaExceeded()
@@ -1542,7 +1632,7 @@ class AdoptTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
         self.quota_error = False
         self.messages = []
         names = ("youtube_client", "video_owner", "download_foreign", "convert_to_video",
-                 "upload_video", "wait_for_processing", "wait_for_claims")
+                 "upload_video", "wait_until_ready")
         original = {name: getattr(upload, name) for name in names}
         self.real_download_foreign = upload.download_foreign
         original_run = upload.subprocess.run
@@ -1570,8 +1660,7 @@ class AdoptTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
         upload.download_foreign = fake_download
         upload.convert_to_video = lambda source, target: target.write_bytes(b"mp4")
         upload.upload_video = fake_upload
-        upload.wait_for_processing = lambda client, video_id, report: None
-        upload.wait_for_claims = lambda video_id, report: None
+        upload.wait_until_ready = lambda video_id, report: True
 
         def restore():
             for name, value in original.items():
@@ -1616,11 +1705,10 @@ class AdoptTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
     def test_a_copy_already_uploaded_is_reused_even_after_the_download_was_deleted(self):
         upload.remember(upload.remote_key("orig1234567"), "copia123456")
         waits = []
-        upload.wait_for_processing = lambda client, video_id, report: waits.append(("processing", video_id))
-        upload.wait_for_claims = lambda video_id, report: waits.append(("claims", video_id))
+        upload.wait_until_ready = lambda video_id, report: waits.append(video_id) or True
         self.assertEqual(self.adopt(), ("copia123456", None, "Set ajeno", True))
         self.assertEqual((self.uploaded, self.downloads), ([], 0))
-        self.assertEqual(waits, [("processing", "copia123456"), ("claims", "copia123456")])
+        self.assertEqual(waits, ["copia123456"])
 
     def test_without_a_google_login_it_keeps_working_with_shazam_alone(self):
         self.client_error = SystemExit("Falta la credencial")
@@ -1649,7 +1737,7 @@ class AdoptTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
         def interrupted(video_id, report):
             raise SystemExit("Studio no deja leer")
 
-        upload.wait_for_claims = interrupted
+        upload.wait_until_ready = interrupted
         with self.assertRaises(SystemExit):
             self.adopt()
         self.assertEqual(upload.load_uploads()["youtube:orig1234567"], "copia123456")

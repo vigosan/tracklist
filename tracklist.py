@@ -60,7 +60,7 @@ def audio_path(video_id):
 
 
 def load_cache(video_id):
-    empty = {"samples": {}, "title": None, "duration": None}
+    empty = {"samples": {}, "title": None, "duration": None, "content_id_done": False}
     path = cache_path(video_id)
     if not path.exists():
         return empty
@@ -72,6 +72,7 @@ def load_cache(video_id):
         "samples": {int(offset): match for offset, match in stored.get("samples", {}).items()},
         "title": stored.get("title"),
         "duration": stored.get("duration"),
+        "content_id_done": stored.get("content_id_done", False),
     }
 
 
@@ -90,6 +91,12 @@ def save_video_details(video_id, title, duration):
     cache = load_cache(video_id)
     cache["title"] = title
     cache["duration"] = duration
+    write_cache(video_id, cache)
+
+
+def mark_content_id_done(video_id):
+    cache = load_cache(video_id)
+    cache["content_id_done"] = True
     write_cache(video_id, cache)
 
 

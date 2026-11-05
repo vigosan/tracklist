@@ -6,6 +6,7 @@ import sys
 import tempfile
 import time
 import webbrowser
+from datetime import datetime
 from pathlib import Path
 
 import tracklist
@@ -117,40 +118,59 @@ def claims_settled(counts, elapsed):
     return len(recent) == CLAIMS_STABLE_POLLS and recent[0] > 0 and len(set(recent)) == 1
 
 
-def processing_status(client, video_id):
-    items = client.videos().list(part="processingDetails", id=video_id).execute().get("items")
+def processing_details(client, video_id):
+    items = client.videos().list(part="snippet,processingDetails", id=video_id).execute().get("items")
     if not items:
-        return "processing"
-    return items[0]["processingDetails"]["processingStatus"]
+        return "processing", time.time()
+    item = items[0]
+    status = item["processingDetails"]["processingStatus"]
+    try:
+        uploaded_at = datetime.fromisoformat(item["snippet"]["publishedAt"].replace("Z", "+00:00")).timestamp()
+    except (KeyError, ValueError):
+        uploaded_at = time.time()
+    return status, uploaded_at
 
 
 def wait_for_processing(client, video_id, report, sleep=time.sleep):
     while True:
-        status = processing_status(client, video_id)
+        status, uploaded_at = processing_details(client, video_id)
         if status == "succeeded":
-            return
+            return uploaded_at
         if status != "processing":
             sys.exit(t("processing_failed", video_id=video_id, status=status))
         report(t("processing", status=status))
         sleep(PROCESSING_POLL)
 
 
-def wait_for_claims(video_id, report, sleep=time.sleep, clock=time.monotonic):
-    began = clock()
+def claims_elapsed(uploaded_at, now):
+    return max(0, int(now - uploaded_at))
+
+
+def wait_for_claims(video_id, uploaded_at, report, sleep=time.sleep, clock=time.time):
     counts = []
     while True:
         _, entries, failure = tracklist.try_claims(video_id, own=True)
         if failure:
             sys.exit(t("claims_unreadable", failure=failure, video_id=video_id))
         counts.append(len(entries))
-        elapsed = clock() - began
-        report(t("claims_count", count=len(entries), elapsed=tracklist.hhmmss(int(elapsed))))
+        elapsed = claims_elapsed(uploaded_at, clock())
+        report(t("claims_count", count=len(entries), elapsed=tracklist.hhmmss(elapsed)))
         if elapsed >= CLAIMS_TIMEOUT:
-            report(t("content_id_busy"))
+            report(t("content_id_timeout"))
+            tracklist.mark_content_id_done(video_id)
             return
         if claims_settled(counts, elapsed):
+            tracklist.mark_content_id_done(video_id)
             return
         sleep(CLAIMS_POLL)
+
+
+def wait_until_ready(video_id, report):
+    if tracklist.load_cache(video_id)["content_id_done"]:
+        return False
+    uploaded_at = wait_for_processing(youtube_client(), video_id, report)
+    wait_for_claims(video_id, uploaded_at, report)
+    return True
 
 
 def file_hash(path):
@@ -302,8 +322,7 @@ def prepare(path, report, title=None, on_uploaded=None):
         report(t("uploaded", video_id=video_id))
     if on_uploaded:
         on_uploaded(video_id)
-    wait_for_processing(client, video_id, report)
-    wait_for_claims(video_id, report)
+    wait_until_ready(video_id, report)
     return video_id
 
 
@@ -325,8 +344,7 @@ def adopt(video_id, report):
     copy = load_uploads().get(remote_key(video_id))
     if copy:
         report(t("already_uploaded", video_id=copy))
-        wait_for_processing(client, copy, report)
-        wait_for_claims(copy, report)
+        wait_until_ready(copy, report)
         return copy, downloaded_audio(video_id), title, True
     audio = download_foreign(video_id)
     if audio is None:
