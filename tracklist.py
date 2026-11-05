@@ -645,6 +645,15 @@ def build_parser():
     return parser
 
 
+def notify_ready(title, run=subprocess.run):
+    message = t("notify_ready", title=title or "").replace("\\", "\\\\").replace('"', '\\"')
+    script = f'display notification "{message}" with title "tracklist"'
+    try:
+        run(["osascript", "-e", script], check=False, capture_output=True)
+    except OSError:
+        pass
+
+
 def main():
     absent = missing_tools()
     if absent:
@@ -692,7 +701,8 @@ def main():
     tui = not args.from_json and args.recognize and recognition_available() and recognize_ui.textual_available()
     if waiting and not tui:
         try:
-            upload.wait_until_ready(video_id, report)
+            if upload.wait_until_ready(video_id, report):
+                notify_ready(original_title)
         except KeyboardInterrupt:
             sys.exit(t("resume_later", command=args.video))
     if audio:

@@ -60,6 +60,8 @@ tracklist <URL> --label                                  # show each track's rec
 
 Other options: `--no-recognize` (skip Shazam), `--from-json FILE` (use a saved claims response), `--duration SECONDS` (total length, for the final gap).
 
+Content ID can take a while to report claims on a new upload. You can quit during that wait and run the same command later: it resumes from the existing upload and never waits twice. The terminal UI shows claims as they arrive, and a macOS notification tells you when the tracklist is ready.
+
 While it runs, a terminal UI shows the tracklist as it grows:
 
 | Key | Action |

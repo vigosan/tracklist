@@ -104,6 +104,7 @@ def run_app(video_id, duration, label, own=False, waiting=False):
             self.own = own
             self.waiting = waiting
             self.waited = False
+            self.notified = False
             self.entries = []
             self.gaps = []
             self.duration = duration
@@ -154,6 +155,7 @@ def run_app(video_id, duration, label, own=False, waiting=False):
                 self.fail(self.error)
                 return
             if not self.gaps:
+                self.notify_if_waited()
                 self.exit()
                 return
             await self.recognize()
@@ -259,6 +261,12 @@ def run_app(video_id, duration, label, own=False, waiting=False):
                 self.video_id, self.gaps, self.on_progress, self.resume
             )
             self.state["phase"] = "done"
+            self.notify_if_waited()
+
+        def notify_if_waited(self):
+            if self.waited and not self.notified:
+                self.notified = True
+                tracklist.notify_ready(self.title_line)
 
         def on_progress(self, event):
             kind = event[0]

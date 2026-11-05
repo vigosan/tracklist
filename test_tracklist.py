@@ -2030,13 +2030,14 @@ class TuiWaitTest(IsolatedCache, unittest.TestCase):
         {"artist": "Cosmo", "title": "Wave", "label": "", "start": 60, "duration": 60},
     ]
 
-    def run_wait(self, statuses, counts, until_done=True, steps=None):
+    def run_wait(self, statuses, counts, until_done=True, steps=None, waiting=True):
         from textual.app import App
 
         processing = iter(statuses)
         polls = iter(counts)
         recognized = []
         self.checked = []
+        self.notified = []
 
         def details(client, video_id):
             self.checked.append(video_id)
@@ -2066,8 +2067,9 @@ class TuiWaitTest(IsolatedCache, unittest.TestCase):
                 mock.patch.object(upload, "CLAIMS_POLL", 0), \
                 mock.patch.object(tracklist, "try_claims", lambda video_id, own: ({}, self.CLAIMS[:next(polls, counts[-1] if counts else 0)], None)), \
                 mock.patch.object(tracklist, "recognize_gaps_async", recognition), \
+                mock.patch.object(tracklist, "notify_ready", self.notified.append), \
                 mock.patch.object(App, "run", drive):
-            result = recognize_tui.run_app("copia123456", 600, False, True, waiting=True)
+            result = recognize_tui.run_app("copia123456", 600, False, True, waiting=waiting)
         return result, recognized
 
     def test_claims_appear_during_the_wait_and_shazam_starts_after(self):
@@ -2078,6 +2080,25 @@ class TuiWaitTest(IsolatedCache, unittest.TestCase):
         self.assertFalse(interrupted)
         self.assertTrue(tracklist.load_cache("copia123456")["content_id_done"])
         self.assertEqual(recognized, [[(120, 600)]])
+
+    def test_a_finished_wait_notifies_once_even_after_a_refresh(self):
+        async def refresh(app, pilot):
+            await pilot.press("r")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+
+        self.run_wait(["processing", "succeeded"], [2, 2, 2], steps=refresh)
+        self.assertEqual(len(self.notified), 1)
+
+    def test_no_notification_when_there_was_no_wait(self):
+        self.run_wait([], [2, 2, 2], waiting=False)
+        self.assertEqual(self.notified, [])
+
+    def test_no_notification_when_the_wait_is_interrupted_or_fails(self):
+        self.run_wait(iter(lambda: "processing", None), [], until_done=False)
+        self.assertEqual(self.notified, [])
+        self.run_wait(["failed"], [])
+        self.assertEqual(self.notified, [])
 
     def test_quitting_during_the_wait_reports_interrupted(self):
         result, recognized = self.run_wait(iter(lambda: "processing", None), [], until_done=False)
@@ -2116,8 +2137,26 @@ class TuiWaitTest(IsolatedCache, unittest.TestCase):
         self.assertEqual(recognized, [])
 
 
+class NotifyReadyTest(unittest.TestCase):
+    def test_it_shows_a_macos_notification_with_the_title_escaped(self):
+        calls = []
+        tracklist.notify_ready('Set "Live" \\ 8', run=lambda argv, **kwargs: calls.append((argv, kwargs)))
+        argv, kwargs = calls[0]
+        self.assertEqual(argv, [
+            "osascript", "-e",
+            'display notification "Tracklist ready: Set \\"Live\\" \\\\ 8" with title "tracklist"',
+        ])
+        self.assertFalse(kwargs["check"])
+
+    def test_a_missing_osascript_is_ignored(self):
+        def missing(argv, **kwargs):
+            raise OSError("no osascript")
+
+        tracklist.notify_ready("Set", run=missing)
+
+
 class TuiWaitInMainTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
-    def run_main(self, outcome):
+    def run_main(self, outcome, waited=True, textual=True):
         upload.remember("youtube:tZ6YRoNjvPI", "copia123456")
         self.calls = {"run_app": [], "render": [], "deleted": [], "terminal_wait": []}
 
@@ -2128,11 +2167,11 @@ class TuiWaitInMainTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
         errors = io.StringIO()
         with mock.patch.object(tracklist, "missing_tools", lambda: []), \
                 mock.patch.object(upload, "adopt", lambda video_id, report: ("copia123456", None, "Set", True)), \
-                mock.patch.object(upload, "wait_until_ready", lambda video_id, report: self.calls["terminal_wait"].append(video_id)), \
+                mock.patch.object(upload, "wait_until_ready", lambda video_id, report: self.calls["terminal_wait"].append(video_id) or waited), \
                 mock.patch.object(upload, "offer_delete", self.calls["deleted"].append), \
                 mock.patch.object(tracklist, "render", lambda *args: self.calls["render"].append(args) or ""), \
                 mock.patch.object(tracklist, "recognition_available", lambda: True), \
-                mock.patch.object(recognize_ui, "textual_available", lambda: True), \
+                mock.patch.object(recognize_ui, "textual_available", lambda: textual), \
                 mock.patch.object(recognize_tui, "run_app", fake_app), \
                 mock.patch("sys.argv", ["tracklist", "https://www.youtube.com/watch?v=tZ6YRoNjvPI", "--duration", "600"]), \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(errors):
@@ -2143,6 +2182,14 @@ class TuiWaitInMainTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
         self.run_main(([], [], [], 600, None, None, False))
         self.assertEqual(self.calls["run_app"], [True])
         self.assertEqual(self.calls["terminal_wait"], [])
+
+    def test_the_terminal_wait_notifies_only_when_it_actually_waited(self):
+        for waited, expected in ((True, ["Set"]), (False, [])):
+            notified = []
+            with mock.patch.object(tracklist, "notify_ready", notified.append), \
+                    mock.patch.object(upload, "needs_wait", lambda video_id: True):
+                self.run_main(([], [], [], 600, None, None, False), waited=waited, textual=False)
+            self.assertEqual(notified, expected)
 
     def test_quitting_the_tui_during_the_wait_prints_no_tracklist_and_offers_no_delete(self):
         errors = self.run_main(([], [], [], 600, None, None, True))
