@@ -2253,7 +2253,7 @@ class RunStepsInMainTest(StepFakes, unittest.TestCase):
 
         with mock.patch.object(upload, "run_steps", interrupted), self.assertRaises(SystemExit) as raised:
             self.run_main()
-        self.assertIn("run 'tracklist https://www.youtube.com/watch?v=orig1234567' again", str(raised.exception.code))
+        self.assertIn("Stopped before finishing: run 'tracklist https://www.youtube.com/watch?v=orig1234567' again to continue", str(raised.exception.code))
         self.assertEqual(self.deleted, [])
 
     def test_fresh_clears_the_cache_of_the_known_copy(self):
@@ -2919,6 +2919,18 @@ class TuiStepsTest(IsolatedCache, unittest.TestCase):
     def test_quitting_after_the_steps_finished_is_not_an_interruption(self):
         result, _ = self.run_steps_app([], upload.Outcome(self.COPY, None, True, 600))
         self.assertFalse(result.interrupted)
+        self.assertTrue(result.steps_done)
+
+    def test_quitting_before_the_steps_finish_says_they_are_not_done(self):
+        async def quit_app(app, pilot):
+            await pilot.press("q")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+
+        result, _ = self.run_steps_app(
+            [("step", "download", 30.0, None)], None, hold="Downloading", during=quit_app,
+        )
+        self.assertFalse(result.steps_done)
 
     def test_a_local_file_with_no_quota_closes_the_app_with_the_message_for_main_to_print(self):
         result, recognized = self.run_steps_app([], SystemExit("quota used up"))
@@ -2946,7 +2958,7 @@ class NotifyReadyTest(unittest.TestCase):
 
 def tui_result(**changes):
     fields = dict(found=[], entries=[], gaps=[], duration=600, title=None, error=None,
-                  interrupted=False, video_id="copia123456")
+                  interrupted=False, video_id="copia123456", steps_done=True)
     return recognize_tui.Result(**{**fields, **changes})
 
 
@@ -3009,11 +3021,19 @@ class TuiWaitInMainTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
         self.assertEqual(self.calls["render"], [])
         self.assertEqual(self.calls["deleted"], [])
 
-    def test_quitting_the_tui_during_the_steps_prints_the_same_resume_hint_and_no_tracklist(self):
-        errors = self.run_main(tui_result(interrupted=True, found=[], video_id="orig1234567"))
-        self.assertIn("run 'tracklist https://www.youtube.com/watch?v=tZ6YRoNjvPI' again", errors)
+    def test_quitting_the_tui_during_the_steps_says_to_run_again_to_continue_not_that_content_id_is_working(self):
+        errors = self.run_main(tui_result(interrupted=True, steps_done=False, found=[], video_id="orig1234567"))
+        self.assertIn("Stopped before finishing: run 'tracklist https://www.youtube.com/watch?v=tZ6YRoNjvPI' again to continue", errors)
+        self.assertNotIn("Content ID is still working", errors)
         self.assertEqual(self.calls["render"], [])
         self.assertEqual(self.calls["deleted"], [])
+
+    def test_a_spanish_system_says_how_to_resume_after_stopping_the_steps(self):
+        with mock.patch.object(messages, "LANGUAGE", "es"):
+            self.assertEqual(
+                messages.t("resume_steps", command="x"),
+                "Parado antes de terminar: vuelve a lanzar 'tracklist x' para continuar",
+            )
 
 
 class ContentIdStatusTest(unittest.TestCase):

@@ -735,7 +735,7 @@ def main():
         try:
             outcome = upload.run_steps(job, progress, threading.Event())
         except KeyboardInterrupt:
-            sys.exit(t("resume_later", command=args.video))
+            sys.exit(t("resume_steps", command=args.video))
         finally:
             progress.finish()
         video_id, own = outcome.video_id, outcome.own
@@ -761,7 +761,7 @@ def main():
         if result.error:
             sys.exit(result.error)
         if result.interrupted:
-            report(t("resume_later", command=args.video))
+            report(t("resume_later" if result.steps_done else "resume_steps", command=args.video))
             return
         entries = sorted(result.entries + drop_claimed(result.entries, result.found), key=lambda entry: entry["start"])
         gaps = find_gaps(entries, result.duration)

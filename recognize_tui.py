@@ -24,6 +24,7 @@ class Result:
     error: str | None
     interrupted: bool
     video_id: str | None
+    steps_done: bool
 
 
 def since_upload(uploaded_at, wall):
@@ -550,4 +551,4 @@ def run_app(video_id, duration, label, own=False, waiting=False, job=None, shown
         app.steps_pending or (app.was_waiting and not app.waited)
     )
     return Result(app.suggestions, app.entries, app.gaps, app.duration, app.title_line,
-                  app.error, interrupted, app.result_id)
+                  app.error, interrupted, app.result_id, not app.steps_pending)
