@@ -1,4 +1,5 @@
 import asyncio
+import re
 import subprocess
 import threading
 import time
@@ -25,6 +26,19 @@ class Result:
     interrupted: bool
     video_id: str | None
     steps_done: bool
+
+
+URL = re.compile(r"https?://\S+")
+
+
+def linked(line):
+    from rich.style import Style
+    from rich.text import Text
+
+    text = Text(line)
+    for match in URL.finditer(line):
+        text.stylize(Style(link=match.group(), underline=True), match.start(), match.end())
+    return text
 
 
 def since_upload(uploaded_at, wall):
@@ -304,7 +318,12 @@ def run_app(video_id, duration, label, own=False, waiting=False, job=None, shown
             self.waited = True
 
         def log_line(self, text):
-            self.query_one("#log", RichLog).write(text)
+            self.query_one("#log", RichLog).write(linked(text))
+
+        def on_click(self, event):
+            link = event.style.link
+            if link:
+                self.open_url(link)
 
         async def resolve_duration(self):
             cached = tracklist.load_cache(self.video_id)

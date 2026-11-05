@@ -3320,6 +3320,49 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class TuiLinkTest(unittest.TestCase):
+    URL = "https://youtu.be/JQ4i5zJu0M8"
+
+    def test_a_url_in_a_log_line_carries_a_terminal_link(self):
+        text = recognize_tui.linked(f"Uploaded as {self.URL}")
+        self.assertEqual(text.plain, f"Uploaded as {self.URL}")
+        links = [(text.plain[span.start:span.end], span.style.link) for span in text.spans]
+        self.assertEqual(links, [(self.URL, self.URL)])
+
+    def test_a_line_without_urls_keeps_its_markup(self):
+        self.assertEqual(recognize_tui.linked("[*] paused").plain, "[*] paused")
+
+    def test_clicking_the_uploaded_link_in_the_log_opens_it_in_the_browser(self):
+        from textual.app import App
+        from textual.widgets import RichLog
+
+        opened = []
+
+        async def no_recognition(video_id, gaps, progress, resume=None):
+            return []
+
+        def drive(app, *args, **kwargs):
+            async def scenario():
+                async with app.run_test(size=(160, 40)) as pilot:
+                    await app.workers.wait_for_complete()
+                    app.open_url = lambda url, **options: opened.append(url)
+                    log = app.query_one("#log", RichLog)
+                    log.clear()
+                    app.log_line(messages.t("uploaded", video_id="JQ4i5zJu0M8"))
+                    await pilot.pause()
+                    await pilot.click("#log", offset=(len("Uploaded as ") + 5, 1))
+                    await pilot.pause()
+                    await pilot.press("q")
+            asyncio.run(scenario())
+
+        with mock.patch.object(tracklist, "try_claims", lambda video_id, own: ({}, TuiWaitTest.CLAIMS[:1], None)), \
+                mock.patch.object(tracklist, "recognize_gaps_async", no_recognition), \
+                mock.patch.object(tracklist, "fetch_videos", lambda ids, session: {}), \
+                mock.patch.object(App, "run", drive):
+            recognize_tui.run_app("copia123456", 600, False, True)
+        self.assertEqual(opened, [self.URL])
+
+
 class TuiCopyLinkTest(unittest.TestCase):
     ORIGINAL = "orig1234567"
     COPY = "copia123456"
