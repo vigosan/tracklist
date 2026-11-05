@@ -2029,7 +2029,7 @@ class TuiWaitTest(IsolatedCache, unittest.TestCase):
         {"artist": "Cosmo", "title": "Wave", "label": "", "start": 60, "duration": 60},
     ]
 
-    def run_wait(self, statuses, counts, until_done=True, steps=None, waiting=True):
+    def run_wait(self, statuses, counts, until_done=True, steps=None, waiting=True, failure=None):
         from textual.app import App
 
         processing = iter(statuses)
@@ -2064,7 +2064,7 @@ class TuiWaitTest(IsolatedCache, unittest.TestCase):
                 mock.patch.object(tracklist, "probe_duration", lambda video_id: 600), \
                 mock.patch.object(upload, "PROCESSING_POLL", 0), \
                 mock.patch.object(upload, "CLAIMS_POLL", 0), \
-                mock.patch.object(tracklist, "try_claims", lambda video_id, own: ({}, self.CLAIMS[:next(polls, counts[-1] if counts else 0)], None)), \
+                mock.patch.object(tracklist, "try_claims", lambda video_id, own: ({}, self.CLAIMS[:next(polls, counts[-1] if counts else 0)], failure)), \
                 mock.patch.object(tracklist, "recognize_gaps_async", recognition), \
                 mock.patch.object(tracklist, "notify_ready", self.notified.append), \
                 mock.patch.object(App, "run", drive):
@@ -2098,6 +2098,14 @@ class TuiWaitTest(IsolatedCache, unittest.TestCase):
         self.assertEqual(self.notified, [])
         self.run_wait(["failed"], [])
         self.assertEqual(self.notified, [])
+
+    def test_unreadable_studio_claims_during_the_wait_close_the_app_with_the_error(self):
+        result, recognized = self.run_wait(["succeeded"], [0], failure="Studio session expired")
+        error, interrupted = result[5], result[6]
+        self.assertIn("Studio session expired", error)
+        self.assertFalse(interrupted)
+        self.assertEqual(recognized, [])
+        self.assertFalse(tracklist.load_cache("copia123456")["content_id_done"])
 
     def test_quitting_during_the_wait_reports_interrupted(self):
         result, recognized = self.run_wait(iter(lambda: "processing", None), [], until_done=False)
