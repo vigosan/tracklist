@@ -904,7 +904,7 @@ class StudioFailureMainTest(IsolatedUploads, unittest.TestCase):
     def test_the_tui_is_told_the_video_is_mine(self):
         seen = []
 
-        def fake_app(video_id, duration, label, own, waiting=False, job=None):
+        def fake_app(video_id, duration, label, own, waiting=False, job=None, shown_id=None):
             seen.append(own)
             return tui_result()
 
@@ -2880,10 +2880,11 @@ def tui_result(**changes):
 class TuiWaitInMainTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
     def run_main(self, outcome, waited=True, textual=True):
         upload.remember("youtube:tZ6YRoNjvPI", "copia123456")
-        self.calls = {"run_app": [], "render": [], "deleted": [], "terminal_wait": [], "jobs": [], "steps": []}
+        self.calls = {"run_app": [], "render": [], "deleted": [], "terminal_wait": [], "jobs": [], "steps": [], "shown": []}
 
-        def fake_app(video_id, duration, label, own=False, waiting=False, job=None):
+        def fake_app(video_id, duration, label, own=False, waiting=False, job=None, shown_id=None):
             self.calls["run_app"].append(waiting)
+            self.calls["shown"].append(shown_id)
             self.calls["jobs"].append(job)
             return outcome
 
@@ -2906,6 +2907,10 @@ class TuiWaitInMainTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
         self.run_main(tui_result())
         self.assertEqual(self.calls["run_app"], [True])
         self.assertEqual(self.calls["terminal_wait"], [])
+
+    def test_the_tui_is_told_the_original_so_the_copied_link_is_not_the_upload(self):
+        self.run_main(tui_result())
+        self.assertEqual(self.calls["shown"], ["tZ6YRoNjvPI"])
 
     def test_the_tui_gets_the_job_so_its_steps_are_shown_instead_of_run_in_a_blank_terminal(self):
         self.run_main(tui_result())
@@ -3208,3 +3213,52 @@ class PackagingTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TuiCopyLinkTest(unittest.TestCase):
+    ORIGINAL = "orig1234567"
+    COPY = "copia123456"
+    TYPED = "typed123456"
+
+    def copied(self, presses, shown_id=None):
+        from textual.app import App
+
+        clipboard = []
+
+        async def no_recognition(video_id, gaps, progress, resume=None):
+            return []
+
+        def drive(app, *args, **kwargs):
+            async def scenario():
+                async with app.run_test() as pilot:
+                    await app.workers.wait_for_complete()
+                    for keys in presses:
+                        await pilot.press(*keys)
+                        await pilot.pause()
+                        await app.workers.wait_for_complete()
+                    await pilot.press("c")
+                    await pilot.press("q")
+            asyncio.run(scenario())
+
+        with mock.patch.object(tracklist, "try_claims", lambda video_id, own: ({}, TuiWaitTest.CLAIMS[:1], None)), \
+                mock.patch.object(tracklist, "recognize_gaps_async", no_recognition), \
+                mock.patch.object(tracklist, "fetch_videos", lambda ids, session: {}), \
+                mock.patch.object(recognize_tui.subprocess, "run", lambda command, **kwargs: clipboard.append(kwargs["input"].decode())), \
+                mock.patch.object(App, "run", drive):
+            recognize_tui.run_app(self.COPY, 600, False, True, shown_id=shown_id)
+        return clipboard[0]
+
+    def test_the_copied_tracklist_links_the_original_video_not_the_uploaded_copy(self):
+        text = self.copied([], shown_id=self.ORIGINAL)
+        self.assertIn(f"https://www.youtube.com/watch?v={self.ORIGINAL}", text)
+        self.assertNotIn(self.COPY, text)
+
+    def test_the_copied_tracklist_links_the_video_typed_with_n_instead_of_the_original(self):
+        typed = f"https://www.youtube.com/watch?v={self.TYPED}"
+        text = self.copied([["n"], list(typed) + ["enter"]], shown_id=self.ORIGINAL)
+        self.assertIn(typed, text)
+        self.assertNotIn(self.ORIGINAL, text)
+
+    def test_without_an_original_the_copied_link_is_the_video_the_app_was_given(self):
+        text = self.copied([])
+        self.assertIn(f"https://www.youtube.com/watch?v={self.COPY}", text)

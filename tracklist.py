@@ -755,7 +755,8 @@ def main():
         import recognize_tui
 
         result = recognize_tui.run_app(
-            video_id, args.duration, args.label, own, waiting=waiting, job=job
+            video_id, args.duration, args.label, own, waiting=waiting, job=job,
+            shown_id=shown_id,
         )
         if result.error:
             sys.exit(result.error)

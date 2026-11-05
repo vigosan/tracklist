@@ -107,7 +107,7 @@ def initial_state(now):
     }
 
 
-def run_app(video_id, duration, label, own=False, waiting=False, job=None):
+def run_app(video_id, duration, label, own=False, waiting=False, job=None, shown_id=None):
     from textual.app import App, ComposeResult
     from textual.containers import Horizontal, Vertical, VerticalScroll
     from textual.widgets import Footer, Input, Label, ProgressBar, RichLog, Static
@@ -132,9 +132,10 @@ def run_app(video_id, duration, label, own=False, waiting=False, job=None):
             ("escape", "cancel", t("key_cancel")),
         ]
 
-        def __init__(self, video_id, duration, label, own, waiting, job):
+        def __init__(self, video_id, duration, label, own, waiting, job, shown_id):
             super().__init__()
             self.video_id = video_id
+            self.shown_id = shown_id or video_id
             self.result_id = video_id
             self.job = job
             self.stop = threading.Event()
@@ -414,7 +415,7 @@ def run_app(video_id, duration, label, own=False, waiting=False, job=None):
             )
             text = tracklist.render(
                 entries, tracklist.find_gaps(entries, self.duration),
-                self.video_id, self.label, self.title_line,
+                self.shown_id, self.label, self.title_line,
             )
             log = self.query_one("#log", RichLog)
             try:
@@ -522,6 +523,7 @@ def run_app(video_id, duration, label, own=False, waiting=False, job=None):
             if not new_id:
                 return
             self.video_id = new_id
+            self.shown_id = new_id
             self.own = False
             self.waiting = False
             self.typed = True
@@ -531,7 +533,7 @@ def run_app(video_id, duration, label, own=False, waiting=False, job=None):
             self.duration = None
             self.restart()
 
-    app = RecognizeApp(video_id, duration, label, own, waiting, job)
+    app = RecognizeApp(video_id, duration, label, own, waiting, job, shown_id)
     app.run()
     app.close_active()
     interrupted = app.error is None and (
