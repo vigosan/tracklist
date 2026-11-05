@@ -42,7 +42,7 @@ To update: `uv tool install --force git+https://github.com/vigosan/tracklist`.
 
 You need a YouTube channel on your Google account: Content ID claims and uploads live there.
 
-1. Sign in to YouTube in your browser. tracklist detects which browser has the session and remembers it; to pick one yourself use `--browser` (chrome, brave, edge, firefox, safari, vivaldi, opera, chromium). Safari needs "Full Disk Access" for your terminal app (Terminal, iTerm, Ghostty...) in System Settings > Privacy & Security.
+1. Sign in to YouTube in your browser. tracklist detects which browser has the session and remembers it, and if that browser later loses its session it switches to another one that is signed in. To pick one yourself use `--browser` (chrome, brave, edge, firefox, safari, vivaldi, opera, chromium), for example `tracklist <URL> --browser safari`: tracklist remembers it for the next runs, and in the run where you pass it uses only that browser. Safari needs "Full Disk Access" for your terminal app (Terminal, iTerm, Ghostty...) in System Settings > Privacy & Security.
 2. macOS asks for your keychain password so tracklist can read the browser's cookies: choose "Always Allow" so it doesn't ask on every run.
 3. A wizard walks you through creating your own Google credential: a Google Cloud project with the YouTube Data API v3 enabled and an OAuth client of type "Desktop app".
 4. Your browser opens so you can sign in with Google and authorise access. The permission Google asks for (`youtube`) gives tracklist control of your channel; it only uploads private copies and deletes the copies it uploaded.
