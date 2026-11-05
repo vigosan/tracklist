@@ -4,6 +4,7 @@ import time
 
 import recognize_ui
 import tracklist
+import upload
 from messages import t
 
 SAMPLE_ESTIMATE = 4.0
@@ -37,6 +38,8 @@ PHASE_LABELS = {
     "claims": "phase_claims",
     "video": "phase_video",
     "probe": "phase_probe",
+    "youtube": "phase_youtube",
+    "content_id": "phase_content_id",
 }
 
 
@@ -52,6 +55,8 @@ def status_text(state, fields):
         if not count:
             return t("status_done_none")
         return t("status_done_one" if count == 1 else "status_done_many", count=count)
+    if state.get("phase") == "content_id":
+        return t("phase_content_id", count=state["claims"], elapsed=tracklist.hhmmss(state["since_upload"]))
     phase = phase_label(state.get("phase"))
     if phase:
         return phase
@@ -68,7 +73,7 @@ def initial_state(now):
     }
 
 
-def run_app(video_id, duration, label, own=False):
+def run_app(video_id, duration, label, own=False, waiting=False):
     from textual.app import App, ComposeResult
     from textual.containers import Horizontal, Vertical, VerticalScroll
     from textual.widgets import Footer, Input, Label, ProgressBar, RichLog, Static
@@ -93,10 +98,12 @@ def run_app(video_id, duration, label, own=False):
             ("escape", "cancel", t("key_cancel")),
         ]
 
-        def __init__(self, video_id, duration, label, own):
+        def __init__(self, video_id, duration, label, own, waiting):
             super().__init__()
             self.video_id = video_id
             self.own = own
+            self.waiting = waiting
+            self.waited = False
             self.entries = []
             self.gaps = []
             self.duration = duration
@@ -160,6 +167,8 @@ def run_app(video_id, duration, label, own=False):
             self.exit()
 
         async def load(self):
+            if self.waiting:
+                await self.wait_for_content_id()
             self.state["phase"] = "claims"
             self.log_line(t("log_querying"))
             self.session, self.entries, failure = await asyncio.to_thread(
@@ -185,6 +194,39 @@ def run_app(video_id, duration, label, own=False):
                             gaps=len(self.gaps), missing=tracklist.hhmmss(missing)))
             self.state["phase"] = "recognizing"
             self.loaded = True
+
+        async def wait_for_content_id(self):
+            self.state["phase"] = "youtube"
+            client = await asyncio.to_thread(upload.youtube_client)
+            while True:
+                status, uploaded_at = await asyncio.to_thread(
+                    upload.processing_details, client, self.video_id
+                )
+                if status == "succeeded":
+                    break
+                if status != "processing":
+                    raise SystemExit(t("processing_failed", video_id=self.video_id, status=status))
+                self.log_line(t("processing", status=status))
+                await asyncio.sleep(upload.PROCESSING_POLL)
+            counts = []
+            while True:
+                _, self.entries, failure = await asyncio.to_thread(
+                    tracklist.try_claims, self.video_id, True
+                )
+                if failure:
+                    raise SystemExit(t("claims_unreadable", failure=failure, video_id=self.video_id))
+                counts.append(len(self.entries))
+                elapsed = upload.claims_elapsed(uploaded_at, time.time())
+                self.state.update(phase="content_id", claims=len(self.entries), since_upload=elapsed)
+                self.log_line(t("claims_count", count=len(self.entries), elapsed=tracklist.hhmmss(elapsed)))
+                if elapsed >= upload.CLAIMS_TIMEOUT:
+                    self.log_line(t("content_id_timeout"))
+                if upload.claims_settled(counts, elapsed):
+                    break
+                await asyncio.sleep(upload.CLAIMS_POLL)
+            await asyncio.to_thread(tracklist.mark_content_id_done, self.video_id)
+            self.waiting = False
+            self.waited = True
 
         def log_line(self, text):
             self.query_one("#log", RichLog).write(text)
@@ -373,6 +415,7 @@ def run_app(video_id, duration, label, own=False):
                 return
             self.video_id = new_id
             self.own = False
+            self.waiting = False
             self.typed = True
             self.entries = []
             self.gaps = []
@@ -380,7 +423,8 @@ def run_app(video_id, duration, label, own=False):
             self.duration = None
             self.restart()
 
-    app = RecognizeApp(video_id, duration, label, own)
+    app = RecognizeApp(video_id, duration, label, own, waiting)
     app.run()
     app.close_active()
-    return app.suggestions, app.entries, app.gaps, app.duration, app.title_line, app.error
+    interrupted = app.waiting and app.error is None
+    return app.suggestions, app.entries, app.gaps, app.duration, app.title_line, app.error, interrupted

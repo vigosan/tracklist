@@ -686,7 +686,11 @@ def main():
     shown_id = original_id or video_id
     if args.fresh:
         clear_cache(video_id)
-    if not args.from_json and upload.needs_wait(video_id):
+    waiting = not args.from_json and upload.needs_wait(video_id)
+    import recognize_ui
+
+    tui = not args.from_json and args.recognize and recognition_available() and recognize_ui.textual_available()
+    if waiting and not tui:
         try:
             upload.wait_until_ready(video_id, report)
         except KeyboardInterrupt:
@@ -695,22 +699,22 @@ def main():
         upload.place_audio(audio, video_id)
         args.duration = args.duration or upload.local_duration(audio)
 
-    if not args.from_json and args.recognize and recognition_available():
-        import recognize_ui
+    if tui:
+        import recognize_tui
 
-        if recognize_ui.textual_available():
-            import recognize_tui
-
-            found, entries, gaps, duration, title, error = recognize_tui.run_app(
-                video_id, args.duration, args.label, own
-            )
-            if error:
-                sys.exit(error)
-            entries = sorted(entries + drop_claimed(entries, found), key=lambda entry: entry["start"])
-            gaps = find_gaps(entries, duration)
-            print(render(entries, gaps, shown_id, args.label, original_title or title))
-            upload.offer_delete(video_id)
+        found, entries, gaps, duration, title, error, interrupted = recognize_tui.run_app(
+            video_id, args.duration, args.label, own, waiting=waiting
+        )
+        if error:
+            sys.exit(error)
+        if interrupted:
+            report(t("resume_later", command=args.video))
             return
+        entries = sorted(entries + drop_claimed(entries, found), key=lambda entry: entry["start"])
+        gaps = find_gaps(entries, duration)
+        print(render(entries, gaps, shown_id, args.label, original_title or title))
+        upload.offer_delete(video_id)
+        return
 
     title = None
     duration = args.duration
@@ -736,8 +740,6 @@ def main():
     if not entries and not gaps:
         sys.exit(t("too_short"))
     if args.recognize and gaps and recognition_available():
-        import recognize_ui
-
         found = recognize_gaps(video_id, gaps, recognize_ui._pentest_progress)
         entries = sorted(entries + drop_claimed(entries, found), key=lambda entry: entry["start"])
         gaps = find_gaps(entries, duration)

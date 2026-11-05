@@ -903,9 +903,9 @@ class StudioFailureMainTest(IsolatedUploads, unittest.TestCase):
     def test_the_tui_is_told_the_video_is_mine(self):
         seen = []
 
-        def fake_app(video_id, duration, label, own):
+        def fake_app(video_id, duration, label, own, waiting=False):
             seen.append(own)
-            return [], [], [], 600, None, None
+            return [], [], [], 600, None, None, False
 
         with mock.patch.object(tracklist, "recognition_available", lambda: True), \
                 mock.patch.object(recognize_ui, "textual_available", lambda: True), \
@@ -1924,7 +1924,7 @@ class RefreshKeyTest(unittest.TestCase):
         with mock.patch.object(tracklist, "try_claims", lambda video_id, own: ({}, next(looks), None)), \
                 mock.patch.object(tracklist, "recognize_gaps_async", no_recognition), \
                 mock.patch.object(App, "run", drive):
-            _, entries, gaps, _, _, _ = recognize_tui.run_app("dnS4s0gar-4", 600, False)
+            _, entries, gaps, _, _, _, _ = recognize_tui.run_app("dnS4s0gar-4", 600, False)
         self.assertEqual([entry["title"] for entry in entries], ["Kisses of Fire"])
         self.assertEqual(gaps, [(300, 600)])
 
@@ -2022,6 +2022,113 @@ class TuiStudioFailureTest(unittest.TestCase):
 
     def test_a_foreign_video_keeps_the_quiet_fallback(self):
         self.assertNotIn(self.MESSAGE, self.log_after_loading(False))
+
+
+class TuiWaitTest(IsolatedCache, unittest.TestCase):
+    CLAIMS = [
+        {"artist": "La Luna", "title": "Kisses of Fire", "label": "", "start": 0, "duration": 60},
+        {"artist": "Cosmo", "title": "Wave", "label": "", "start": 60, "duration": 60},
+    ]
+
+    def run_wait(self, statuses, counts, until_done=True):
+        from textual.app import App
+
+        processing = iter(statuses)
+        polls = iter(counts)
+        recognized = []
+
+        async def recognition(video_id, gaps, progress, resume=None):
+            recognized.append(gaps)
+            return []
+
+        def drive(app, *args, **kwargs):
+            async def scenario():
+                async with app.run_test() as pilot:
+                    if until_done:
+                        await app.workers.wait_for_complete()
+                    else:
+                        await pilot.pause(0.2)
+                    await pilot.press("q")
+            asyncio.run(scenario())
+
+        with mock.patch.object(upload, "youtube_client", lambda: "client"), \
+                mock.patch.object(upload, "processing_details", lambda client, video_id: (next(processing), time.time())), \
+                mock.patch.object(upload, "PROCESSING_POLL", 0), \
+                mock.patch.object(upload, "CLAIMS_POLL", 0), \
+                mock.patch.object(tracklist, "try_claims", lambda video_id, own: ({}, self.CLAIMS[:next(polls, counts[-1] if counts else 0)], None)), \
+                mock.patch.object(tracklist, "recognize_gaps_async", recognition), \
+                mock.patch.object(App, "run", drive):
+            result = recognize_tui.run_app("copia123456", 600, False, True, waiting=True)
+        return result, recognized
+
+    def test_claims_appear_during_the_wait_and_shazam_starts_after(self):
+        result, recognized = self.run_wait(["processing", "succeeded"], [0, 2, 2, 2])
+        _, entries, _, _, _, error, interrupted = result
+        self.assertEqual(len(entries), 2)
+        self.assertIsNone(error)
+        self.assertFalse(interrupted)
+        self.assertTrue(tracklist.load_cache("copia123456")["content_id_done"])
+        self.assertEqual(recognized, [[(120, 600)]])
+
+    def test_quitting_during_the_wait_reports_interrupted(self):
+        result, recognized = self.run_wait(iter(lambda: "processing", None), [], until_done=False)
+        self.assertTrue(result[6])
+        self.assertEqual(recognized, [])
+        self.assertFalse(tracklist.load_cache("copia123456")["content_id_done"])
+
+    def test_a_failed_processing_closes_with_the_error(self):
+        result, recognized = self.run_wait(["failed"], [])
+        _, _, _, _, _, error, interrupted = result
+        self.assertIn("YouTube could not process the video copia123456 (failed)", error)
+        self.assertFalse(interrupted)
+        self.assertEqual(recognized, [])
+
+
+class TuiWaitInMainTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
+    def run_main(self, outcome):
+        upload.remember("youtube:tZ6YRoNjvPI", "copia123456")
+        self.calls = {"run_app": [], "render": [], "deleted": [], "terminal_wait": []}
+
+        def fake_app(video_id, duration, label, own=False, waiting=False):
+            self.calls["run_app"].append(waiting)
+            return outcome
+
+        errors = io.StringIO()
+        with mock.patch.object(tracklist, "missing_tools", lambda: []), \
+                mock.patch.object(upload, "adopt", lambda video_id, report: ("copia123456", None, "Set", True)), \
+                mock.patch.object(upload, "wait_until_ready", lambda video_id, report: self.calls["terminal_wait"].append(video_id)), \
+                mock.patch.object(upload, "offer_delete", self.calls["deleted"].append), \
+                mock.patch.object(tracklist, "render", lambda *args: self.calls["render"].append(args) or ""), \
+                mock.patch.object(tracklist, "recognition_available", lambda: True), \
+                mock.patch.object(recognize_ui, "textual_available", lambda: True), \
+                mock.patch.object(recognize_tui, "run_app", fake_app), \
+                mock.patch("sys.argv", ["tracklist", "https://www.youtube.com/watch?v=tZ6YRoNjvPI", "--duration", "600"]), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(errors):
+            tracklist.main()
+        return errors.getvalue()
+
+    def test_the_tui_does_the_wait_instead_of_the_terminal(self):
+        self.run_main(([], [], [], 600, None, None, False))
+        self.assertEqual(self.calls["run_app"], [True])
+        self.assertEqual(self.calls["terminal_wait"], [])
+
+    def test_quitting_the_tui_during_the_wait_prints_no_tracklist_and_offers_no_delete(self):
+        errors = self.run_main(([], [], [], 600, None, None, True))
+        self.assertIn("run 'tracklist https://www.youtube.com/watch?v=tZ6YRoNjvPI' again", errors)
+        self.assertEqual(self.calls["render"], [])
+        self.assertEqual(self.calls["deleted"], [])
+
+
+class ContentIdStatusTest(unittest.TestCase):
+    def test_the_wait_shows_how_many_tracks_content_id_found_and_since_when(self):
+        state = {**STATE, "phase": "content_id", "paused": False, "claims": 5, "since_upload": 720}
+        self.assertEqual(
+            recognize_tui.status_text(state, recognize_tui.status_fields(state, 102.0)),
+            "Content ID: 5 tracks, 12:00 since upload",
+        )
+
+    def test_processing_on_youtube_has_its_own_label(self):
+        self.assertEqual(recognize_tui.phase_label("youtube"), "YouTube is processing the video")
 
 
 class OfferDeleteTest(IsolatedUploads, unittest.TestCase):
