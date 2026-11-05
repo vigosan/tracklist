@@ -1520,7 +1520,6 @@ class WaitForProcessingTest(unittest.TestCase):
         before = time.time()
         self.assertGreaterEqual(upload.processing_details(client, "vid12345678")[1], before)
 
-
     def test_a_terminated_upload_stops_instead_of_waiting_forever(self):
         with self.assertRaises(SystemExit):
             self.wait(["processing", "terminated"])
