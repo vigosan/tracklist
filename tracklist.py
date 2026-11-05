@@ -717,11 +717,20 @@ def main():
     job = None
     if local or not args.from_json:
         job = upload.plan_job(original_id, local, report)
+    import recognize_ui
+
+    tui = not args.from_json and args.recognize and recognition_available() and recognize_ui.textual_available()
     original_title = None
+    waiting = False
     if job:
         cached = job.copy or job.original_id
         if args.fresh and cached:
             clear_cache(cached)
+        original_title = job.title
+    if job and tui:
+        video_id, own = job.copy or job.original_id, job.own
+        waiting = bool(job.copy) and upload.needs_wait(job.copy)
+    elif job:
         progress = terminal_progress()
         try:
             outcome = upload.run_steps(job, progress, threading.Event())
@@ -730,18 +739,13 @@ def main():
         finally:
             progress.finish()
         video_id, own = outcome.video_id, outcome.own
-        original_title = job.title
         args.duration = args.duration or outcome.duration
     else:
         video_id, own = original_id, False
         if args.fresh:
             clear_cache(video_id)
     shown_id = original_id or video_id
-    waiting = not args.from_json and upload.needs_wait(video_id)
-    import recognize_ui
-
-    tui = not args.from_json and args.recognize and recognition_available() and recognize_ui.textual_available()
-    if waiting and not tui:
+    if not tui and not args.from_json and upload.needs_wait(video_id):
         try:
             if upload.wait_until_ready(video_id, report):
                 notify_ready(original_title)
@@ -750,18 +754,18 @@ def main():
     if tui:
         import recognize_tui
 
-        found, entries, gaps, duration, title, error, interrupted = recognize_tui.run_app(
-            video_id, args.duration, args.label, own, waiting=waiting
+        result = recognize_tui.run_app(
+            video_id, args.duration, args.label, own, waiting=waiting, job=job
         )
-        if error:
-            sys.exit(error)
-        if interrupted:
+        if result.error:
+            sys.exit(result.error)
+        if result.interrupted:
             report(t("resume_later", command=args.video))
             return
-        entries = sorted(entries + drop_claimed(entries, found), key=lambda entry: entry["start"])
-        gaps = find_gaps(entries, duration)
-        print(render(entries, gaps, shown_id, args.label, original_title or title))
-        upload.offer_delete(video_id)
+        entries = sorted(result.entries + drop_claimed(result.entries, result.found), key=lambda entry: entry["start"])
+        gaps = find_gaps(entries, result.duration)
+        print(render(entries, gaps, original_id or result.video_id, args.label, original_title or result.title))
+        upload.offer_delete(result.video_id)
         return
 
     title = None

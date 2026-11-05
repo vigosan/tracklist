@@ -904,9 +904,9 @@ class StudioFailureMainTest(IsolatedUploads, unittest.TestCase):
     def test_the_tui_is_told_the_video_is_mine(self):
         seen = []
 
-        def fake_app(video_id, duration, label, own, waiting=False):
+        def fake_app(video_id, duration, label, own, waiting=False, job=None):
             seen.append(own)
-            return [], [], [], 600, None, None, False
+            return tui_result()
 
         with mock.patch.object(tracklist, "recognition_available", lambda: True), \
                 mock.patch.object(recognize_ui, "textual_available", lambda: True), \
@@ -2384,9 +2384,9 @@ class RefreshKeyTest(unittest.TestCase):
         with mock.patch.object(tracklist, "try_claims", lambda video_id, own: ({}, next(looks), None)), \
                 mock.patch.object(tracklist, "recognize_gaps_async", no_recognition), \
                 mock.patch.object(App, "run", drive):
-            _, entries, gaps, _, _, _, _ = recognize_tui.run_app("dnS4s0gar-4", 600, False)
-        self.assertEqual([entry["title"] for entry in entries], ["Kisses of Fire"])
-        self.assertEqual(gaps, [(300, 600)])
+            result = recognize_tui.run_app("dnS4s0gar-4", 600, False)
+        self.assertEqual([entry["title"] for entry in result.entries], ["Kisses of Fire"])
+        self.assertEqual(result.gaps, [(300, 600)])
 
 
 class ConfirmKeyTest(unittest.TestCase):
@@ -2534,10 +2534,9 @@ class TuiWaitTest(IsolatedCache, unittest.TestCase):
 
     def test_claims_appear_during_the_wait_and_shazam_starts_after(self):
         result, recognized = self.run_wait(["processing", "succeeded"], [0, 2, 2, 2])
-        _, entries, _, _, _, error, interrupted = result
-        self.assertEqual(len(entries), 2)
-        self.assertIsNone(error)
-        self.assertFalse(interrupted)
+        self.assertEqual(len(result.entries), 2)
+        self.assertIsNone(result.error)
+        self.assertFalse(result.interrupted)
         self.assertTrue(tracklist.load_cache("copia123456")["content_id_done"])
         self.assertEqual(recognized, [[(120, 600)]])
 
@@ -2562,15 +2561,14 @@ class TuiWaitTest(IsolatedCache, unittest.TestCase):
 
     def test_unreadable_studio_claims_during_the_wait_close_the_app_with_the_error(self):
         result, recognized = self.run_wait(["succeeded"], [0], failure="Studio session expired")
-        error, interrupted = result[5], result[6]
-        self.assertIn("Studio session expired", error)
-        self.assertFalse(interrupted)
+        self.assertIn("Studio session expired", result.error)
+        self.assertFalse(result.interrupted)
         self.assertEqual(recognized, [])
         self.assertFalse(tracklist.load_cache("copia123456")["content_id_done"])
 
     def test_quitting_during_the_wait_reports_interrupted(self):
         result, recognized = self.run_wait(iter(lambda: "processing", None), [], until_done=False)
-        self.assertTrue(result[6])
+        self.assertTrue(result.interrupted)
         self.assertEqual(recognized, [])
         self.assertFalse(tracklist.load_cache("copia123456")["content_id_done"])
 
@@ -2583,7 +2581,7 @@ class TuiWaitTest(IsolatedCache, unittest.TestCase):
             await app.workers.wait_for_complete()
 
         result, _ = self.run_wait(iter(lambda: "processing", None), [], until_done=False, steps=type_url)
-        self.assertTrue(result[6])
+        self.assertTrue(result.interrupted)
         self.assertFalse(tracklist.load_cache("copia123456")["content_id_done"])
 
     def test_refreshing_after_a_finished_wait_does_not_wait_again(self):
@@ -2595,13 +2593,160 @@ class TuiWaitTest(IsolatedCache, unittest.TestCase):
         result, recognized = self.run_wait(["processing", "succeeded"], [2, 2, 2], steps=refresh)
         self.assertEqual(self.checked, ["copia123456", "copia123456"])
         self.assertEqual(len(recognized), 2)
-        self.assertFalse(result[6])
+        self.assertFalse(result.interrupted)
 
     def test_a_failed_processing_closes_with_the_error(self):
         result, recognized = self.run_wait(["failed"], [])
-        _, _, _, _, _, error, interrupted = result
-        self.assertIn("YouTube could not process the video copia123456 (failed)", error)
-        self.assertFalse(interrupted)
+        self.assertIn("YouTube could not process the video copia123456 (failed)", result.error)
+        self.assertFalse(result.interrupted)
+        self.assertEqual(recognized, [])
+
+
+class StepStatusTest(unittest.TestCase):
+    def status(self, phase, percent, detail=None):
+        state = {**STATE, "phase": phase, "paused": False, "step_percent": percent, "step_detail": detail}
+        return recognize_tui.status_text(state, recognize_tui.status_fields(state, 102.0))
+
+    def test_a_download_shows_its_percent_and_speed(self):
+        self.assertEqual(self.status("download", 68, "4.92MiB/s"), "Downloading 68% · 4.92MiB/s")
+
+    def test_each_step_has_its_own_label(self):
+        self.assertEqual(self.status("convert", 40), "Converting 40%")
+        self.assertEqual(self.status("upload", 40), "Uploading 40%")
+        self.assertEqual(self.status("audio", 70), "Preparing the audio 70%")
+
+    def test_a_step_without_a_known_percent_shows_only_its_label(self):
+        self.assertEqual(self.status("download", None), "Downloading")
+        self.assertEqual(self.status("upload", None, "resuming"), "Uploading · resuming")
+
+    def test_the_bar_follows_the_step_instead_of_the_samples(self):
+        state = {**STATE, "phase": "convert", "step_percent": 40, "step_detail": None}
+        self.assertEqual(recognize_tui.status_fields(state, 102.0)["percent"], 40)
+        state["step_percent"] = None
+        self.assertEqual(recognize_tui.status_fields(state, 102.0)["percent"], 0)
+
+    def test_a_spanish_system_names_the_steps_in_spanish(self):
+        with mock.patch.object(messages, "LANGUAGE", "es"):
+            self.assertEqual(self.status("download", 68), "Descargando 68%")
+            self.assertEqual(self.status("convert", 1), "Convirtiendo 1%")
+            self.assertEqual(self.status("upload", 2), "Subiendo 2%")
+            self.assertEqual(self.status("audio", 3), "Preparando el audio 3%")
+
+
+class TuiStepsTest(IsolatedCache, unittest.TestCase):
+    ORIGINAL = "orig1234567"
+    COPY = "copia123456"
+
+    def run_steps_app(self, script, outcome, waiting_after=False, inspect=None):
+        from textual.app import App
+
+        release = threading.Event()
+        self.checked = []
+        self.seen = {}
+        recognized = []
+        job = upload.Job(self.ORIGINAL, "Set", None, None, True, None)
+
+        def fake_steps(given, progress, stop):
+            self.seen["job"] = given
+            self.seen["stop"] = stop
+            for event in script:
+                progress(event)
+            if inspect:
+                release.wait(5)
+            if isinstance(outcome, BaseException):
+                raise outcome
+            return outcome
+
+        def details(client, video_id):
+            self.checked.append(video_id)
+            return "succeeded", time.time()
+
+        async def recognition(video_id, gaps, progress, resume=None):
+            recognized.append(video_id)
+            return []
+
+        def drive(app, *args, **kwargs):
+            async def scenario():
+                async with app.run_test() as pilot:
+                    if inspect:
+                        await pilot.pause(0.3)
+                        self.seen["during"] = inspect(app)
+                        release.set()
+                    await app.workers.wait_for_complete()
+                    self.seen["log"] = [line.text.strip() for line in app.query_one("#log").lines]
+                    await pilot.press("q")
+            asyncio.run(scenario())
+
+        with mock.patch.object(upload, "run_steps", fake_steps), \
+                mock.patch.object(upload, "needs_wait", lambda video_id: waiting_after), \
+                mock.patch.object(upload, "youtube_client", lambda: "client"), \
+                mock.patch.object(upload, "processing_details", details), \
+                mock.patch.object(upload, "CLAIMS_POLL", 0), \
+                mock.patch.object(tracklist, "fetch_videos", lambda ids, session: {}), \
+                mock.patch.object(tracklist, "probe_duration", lambda video_id: 600), \
+                mock.patch.object(tracklist, "try_claims", lambda video_id, own: ({}, TuiWaitTest.CLAIMS[:1], None)), \
+                mock.patch.object(tracklist, "recognize_gaps_async", recognition), \
+                mock.patch.object(tracklist, "notify_ready", lambda title: None), \
+                mock.patch.object(App, "run", drive):
+            result = recognize_tui.run_app(self.ORIGINAL, None, False, True, job=job)
+        return result, recognized
+
+    def test_the_status_and_the_bar_follow_the_running_step(self):
+        def inspect(app):
+            return str(app.query_one("#status-text").render()), app.query_one("#bar").progress
+
+        self.run_steps_app(
+            [("step", "download", 68.0, "4.92MiB/s")],
+            upload.Outcome(self.COPY, None, True, 600), inspect=inspect,
+        )
+        text, bar = self.seen["during"]
+        self.assertIn("Downloading 68% · 4.92MiB/s", text)
+        self.assertEqual(bar, 68)
+
+    def test_the_log_marks_each_new_step_once_the_upload_and_the_warnings(self):
+        script = [
+            ("step", "download", 10.0, None), ("step", "download", 90.0, None),
+            ("step", "convert", 50.0, None), ("step", "upload", 20.0, None),
+            ("step-done", "upload", self.COPY), ("warning", "careful now"),
+        ]
+        self.run_steps_app(script, upload.Outcome(self.COPY, None, True, 600))
+        log = self.seen["log"]
+        self.assertEqual(log.count("Downloading"), 1)
+        self.assertLess(log.index("Downloading"), log.index("Converting"))
+        self.assertLess(log.index("Converting"), log.index("Uploading"))
+        self.assertIn(f"Uploaded as https://youtu.be/{self.COPY}", log)
+        self.assertIn("careful now", log)
+
+    def test_steps_run_off_the_ui_thread_with_a_stop_event_for_quitting(self):
+        self.run_steps_app([], upload.Outcome(self.COPY, None, True, 600))
+        self.assertEqual(self.seen["job"].original_id, self.ORIGINAL)
+        self.assertIsInstance(self.seen["stop"], threading.Event)
+
+    def test_after_an_upload_the_result_is_the_copy_and_the_wait_starts_on_it(self):
+        result, recognized = self.run_steps_app(
+            [("step-done", "upload", self.COPY)],
+            upload.Outcome(self.COPY, None, True, 600), waiting_after=True,
+        )
+        self.assertEqual(result.video_id, self.COPY)
+        self.assertEqual(self.checked, [self.COPY])
+        self.assertEqual(recognized, [self.COPY])
+        self.assertEqual(result.duration, 600)
+        self.assertFalse(result.interrupted)
+
+    def test_a_quota_fallback_goes_on_with_shazam_on_the_original_without_waiting(self):
+        result, recognized = self.run_steps_app(
+            [("warning", "quota used up")],
+            upload.Outcome(self.ORIGINAL, None, False, None),
+        )
+        self.assertEqual(result.video_id, self.ORIGINAL)
+        self.assertEqual(self.checked, [])
+        self.assertIn("quota used up", self.seen["log"])
+        self.assertEqual(recognized, [self.ORIGINAL])
+        self.assertIsNone(result.error)
+
+    def test_a_local_file_with_no_quota_closes_the_app_with_the_message_for_main_to_print(self):
+        result, recognized = self.run_steps_app([], SystemExit("quota used up"))
+        self.assertEqual(result.error, "quota used up")
         self.assertEqual(recognized, [])
 
 
@@ -2623,18 +2768,26 @@ class NotifyReadyTest(unittest.TestCase):
         tracklist.notify_ready("Set", run=missing)
 
 
+def tui_result(**changes):
+    fields = dict(found=[], entries=[], gaps=[], duration=600, title=None, error=None,
+                  interrupted=False, video_id="copia123456")
+    return recognize_tui.Result(**{**fields, **changes})
+
+
 class TuiWaitInMainTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
     def run_main(self, outcome, waited=True, textual=True):
         upload.remember("youtube:tZ6YRoNjvPI", "copia123456")
-        self.calls = {"run_app": [], "render": [], "deleted": [], "terminal_wait": []}
+        self.calls = {"run_app": [], "render": [], "deleted": [], "terminal_wait": [], "jobs": [], "steps": []}
 
-        def fake_app(video_id, duration, label, own=False, waiting=False):
+        def fake_app(video_id, duration, label, own=False, waiting=False, job=None):
             self.calls["run_app"].append(waiting)
+            self.calls["jobs"].append(job)
             return outcome
 
         errors = io.StringIO()
         with mock.patch.object(tracklist, "missing_tools", lambda: []), \
                 fake_job("copia123456", "Set", True), \
+                mock.patch.object(upload, "run_steps", lambda *args: self.calls["steps"].append(args) or upload.Outcome("copia123456", None, True, None)), \
                 mock.patch.object(upload, "wait_until_ready", lambda video_id, report: self.calls["terminal_wait"].append(video_id) or waited), \
                 mock.patch.object(upload, "offer_delete", self.calls["deleted"].append), \
                 mock.patch.object(tracklist, "render", lambda *args: self.calls["render"].append(args) or ""), \
@@ -2647,20 +2800,30 @@ class TuiWaitInMainTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
         return errors.getvalue()
 
     def test_the_tui_does_the_wait_instead_of_the_terminal(self):
-        self.run_main(([], [], [], 600, None, None, False))
+        self.run_main(tui_result())
         self.assertEqual(self.calls["run_app"], [True])
         self.assertEqual(self.calls["terminal_wait"], [])
+
+    def test_the_tui_gets_the_job_so_its_steps_are_shown_instead_of_run_in_a_blank_terminal(self):
+        self.run_main(tui_result())
+        self.assertEqual(self.calls["jobs"][0].original_id, "orig1234567")
+        self.assertEqual(self.calls["steps"], [])
+
+    def test_the_copy_the_tui_ended_with_is_the_one_offered_for_deletion_while_the_original_is_shown(self):
+        self.run_main(tui_result(video_id="otracopia12"))
+        self.assertEqual(self.calls["deleted"], ["otracopia12"])
+        self.assertEqual(self.calls["render"][0][2], "tZ6YRoNjvPI")
 
     def test_the_terminal_wait_notifies_only_when_it_actually_waited(self):
         for waited, expected in ((True, ["Set"]), (False, [])):
             notified = []
             with mock.patch.object(tracklist, "notify_ready", notified.append), \
                     mock.patch.object(upload, "needs_wait", lambda video_id: True):
-                self.run_main(([], [], [], 600, None, None, False), waited=waited, textual=False)
+                self.run_main(tui_result(), waited=waited, textual=False)
             self.assertEqual(notified, expected)
 
     def test_quitting_the_tui_during_the_wait_prints_no_tracklist_and_offers_no_delete(self):
-        errors = self.run_main(([], [], [], 600, None, None, True))
+        errors = self.run_main(tui_result(interrupted=True))
         self.assertIn("run 'tracklist https://www.youtube.com/watch?v=tZ6YRoNjvPI' again", errors)
         self.assertEqual(self.calls["render"], [])
         self.assertEqual(self.calls["deleted"], [])

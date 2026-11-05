@@ -1,6 +1,8 @@
 import asyncio
 import subprocess
+import threading
 import time
+from dataclasses import dataclass
 
 import recognize_ui
 import tracklist
@@ -9,6 +11,19 @@ from messages import t
 
 SAMPLE_ESTIMATE = 4.0
 SPINNER = "⣾⣽⣻⢿⡿⣟⣯⣷"
+STEP_PHASES = ("download", "convert", "upload", "audio")
+
+
+@dataclass
+class Result:
+    found: list
+    entries: list
+    gaps: list
+    duration: int | None
+    title: str | None
+    error: str | None
+    interrupted: bool
+    video_id: str | None
 
 
 def since_upload(uploaded_at, wall):
@@ -26,6 +41,8 @@ def status_fields(state, now, wall=None):
         fraction = min(0.95, (now - state["sample_started"]) / SAMPLE_ESTIMATE)
     if state.get("phase") == "done":
         percent = 100
+    elif state.get("phase") in STEP_PHASES:
+        percent = int(state.get("step_percent") or 0)
     else:
         percent = min(100, int(100 * (state["sample"] + fraction) / total)) if total else 0
     gap = state["gap"]
@@ -47,6 +64,10 @@ PHASE_LABELS = {
     "probe": "phase_probe",
     "youtube": "phase_youtube",
     "content_id": "phase_content_id",
+    "download": "phase_download",
+    "convert": "phase_convert",
+    "upload": "phase_upload",
+    "audio": "phase_audio",
 }
 
 
@@ -65,6 +86,12 @@ def status_text(state, fields):
     if state.get("phase") == "content_id":
         return t("phase_content_id", count=state["claims"], elapsed=fields["since_upload"])
     phase = phase_label(state.get("phase"))
+    if state.get("phase") in STEP_PHASES:
+        percent = state.get("step_percent")
+        parts = (phase, None if percent is None else f"{percent:.0f}%")
+        text = " ".join(part for part in parts if part)
+        detail = state.get("step_detail")
+        return f"{text} · {detail}" if detail else text
     if phase:
         return phase
     if fields["backoff"]:
@@ -80,7 +107,7 @@ def initial_state(now):
     }
 
 
-def run_app(video_id, duration, label, own=False, waiting=False):
+def run_app(video_id, duration, label, own=False, waiting=False, job=None):
     from textual.app import App, ComposeResult
     from textual.containers import Horizontal, Vertical, VerticalScroll
     from textual.widgets import Footer, Input, Label, ProgressBar, RichLog, Static
@@ -105,9 +132,13 @@ def run_app(video_id, duration, label, own=False, waiting=False):
             ("escape", "cancel", t("key_cancel")),
         ]
 
-        def __init__(self, video_id, duration, label, own, waiting):
+        def __init__(self, video_id, duration, label, own, waiting, job):
             super().__init__()
             self.video_id = video_id
+            self.result_id = video_id
+            self.job = job
+            self.stop = threading.Event()
+            self.was_waiting = waiting
             self.own = own
             self.waiting = waiting
             self.waited = False
@@ -176,6 +207,8 @@ def run_app(video_id, duration, label, own=False, waiting=False):
             self.exit()
 
         async def load(self):
+            if self.job is not None:
+                await self.run_job()
             if self.waiting:
                 await self.wait_for_content_id()
             self.state["phase"] = "claims"
@@ -203,6 +236,19 @@ def run_app(video_id, duration, label, own=False, waiting=False):
                             gaps=len(self.gaps), missing=tracklist.hhmmss(missing)))
             self.state["phase"] = "recognizing"
             self.loaded = True
+
+        async def run_job(self):
+            def forward(event):
+                self.call_from_thread(self.on_progress, event)
+
+            outcome = await asyncio.to_thread(upload.run_steps, self.job, forward, self.stop)
+            self.job = None
+            self.video_id = outcome.video_id
+            self.result_id = outcome.video_id
+            self.own = outcome.own
+            self.duration = self.duration or outcome.duration
+            self.waiting = await asyncio.to_thread(upload.needs_wait, self.video_id)
+            self.was_waiting = self.was_waiting or self.waiting
 
         async def wait_for_content_id(self):
             self.state["phase"] = "youtube"
@@ -277,7 +323,16 @@ def run_app(video_id, duration, label, own=False, waiting=False):
 
         def on_progress(self, event):
             kind = event[0]
-            if kind == "gap":
+            if kind == "step":
+                _, name, percent, detail = event
+                if self.state.get("phase") != name:
+                    self.log_line(phase_label(name))
+                self.state.update(phase=name, step_percent=percent, step_detail=detail)
+            elif kind == "step-done":
+                self.log_line(t("uploaded", video_id=event[2]))
+            elif kind == "warning":
+                self.log_line(event[1])
+            elif kind == "gap":
                 self.close_active()
                 _, index, total, start, end = event
                 planned = len(tracklist.plan_samples(start, end))
@@ -438,8 +493,9 @@ def run_app(video_id, duration, label, own=False, waiting=False):
             self.duration = None
             self.restart()
 
-    app = RecognizeApp(video_id, duration, label, own, waiting)
+    app = RecognizeApp(video_id, duration, label, own, waiting, job)
     app.run()
     app.close_active()
-    interrupted = waiting and not app.waited and app.error is None
-    return app.suggestions, app.entries, app.gaps, app.duration, app.title_line, app.error, interrupted
+    interrupted = app.was_waiting and not app.waited and app.error is None
+    return Result(app.suggestions, app.entries, app.gaps, app.duration, app.title_line,
+                  app.error, interrupted, app.result_id)
