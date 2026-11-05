@@ -140,6 +140,7 @@ def run_app(video_id, duration, label, own=False, waiting=False, job=None):
             self.stop = threading.Event()
             self.was_waiting = waiting
             self.steps_running = False
+            self.steps_pending = job is not None
             self.own = own
             self.waiting = waiting
             self.waited = False
@@ -210,6 +211,8 @@ def run_app(video_id, duration, label, own=False, waiting=False, job=None):
         async def load(self):
             if self.job is not None:
                 await self.run_job()
+                if self.steps_pending:
+                    return
             if self.waiting:
                 await self.wait_for_content_id()
             self.state["phase"] = "claims"
@@ -245,9 +248,12 @@ def run_app(video_id, duration, label, own=False, waiting=False, job=None):
             self.steps_running = True
             try:
                 outcome = await asyncio.to_thread(upload.run_steps, self.job, forward, self.stop)
+            except upload.Cancelled:
+                return
             finally:
                 self.steps_running = False
             self.job = None
+            self.steps_pending = False
             self.video_id = outcome.video_id
             self.result_id = outcome.video_id
             self.own = outcome.own
@@ -458,10 +464,32 @@ def run_app(video_id, duration, label, own=False, waiting=False, job=None):
                 return
             self.apply_pending(pending)
 
-        def action_confirm(self):
+        async def action_quit(self):
+            if not self.steps_running:
+                self.exit()
+                return
+            if self.state.get("phase") != "upload":
+                await self.stop_steps_and_exit()
+                return
+            if self.pending != "quit":
+                self.pending = "quit"
+                self.log_line(t("log_quit_upload", yes=t("yes")))
+
+        async def stop_steps_and_exit(self):
+            self.stop.set()
+            if self.steps_running:
+                self.log_line(t("log_stopping"))
+            while self.steps_running:
+                await asyncio.sleep(0.05)
+            self.exit()
+
+        async def action_confirm(self):
             if self.pending is None:
                 return
             pending, self.pending = self.pending, None
+            if pending == "quit":
+                await self.stop_steps_and_exit()
+                return
             self.apply_pending(pending)
 
         def action_cancel(self):
@@ -506,6 +534,8 @@ def run_app(video_id, duration, label, own=False, waiting=False, job=None):
     app = RecognizeApp(video_id, duration, label, own, waiting, job)
     app.run()
     app.close_active()
-    interrupted = app.was_waiting and not app.waited and app.error is None
+    interrupted = app.error is None and (
+        app.steps_pending or (app.was_waiting and not app.waited)
+    )
     return Result(app.suggestions, app.entries, app.gaps, app.duration, app.title_line,
                   app.error, interrupted, app.result_id)

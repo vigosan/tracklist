@@ -2637,7 +2637,7 @@ class TuiStepsTest(IsolatedCache, unittest.TestCase):
     ORIGINAL = "orig1234567"
     COPY = "copia123456"
 
-    def run_steps_app(self, script, outcome, waiting_after=False, inspect=None, keys=()):
+    def run_steps_app(self, script, outcome, waiting_after=False, inspect=None, keys=(), hold=None, during=None):
         from textual.app import App
 
         release = threading.Event()
@@ -2655,6 +2655,11 @@ class TuiStepsTest(IsolatedCache, unittest.TestCase):
             self.seen["stop"] = stop
             for event in script:
                 progress(event)
+            if hold:
+                self.seen["stopped"] = stop.wait(5)
+                time.sleep(0.2)
+                self.seen["thread_done"] = True
+                raise upload.Cancelled()
             if inspect:
                 release.wait(5)
             if isinstance(outcome, BaseException):
@@ -2672,6 +2677,13 @@ class TuiStepsTest(IsolatedCache, unittest.TestCase):
         def drive(app, *args, **kwargs):
             async def scenario():
                 async with app.run_test() as pilot:
+                    if during:
+                        for _ in range(50):
+                            await pilot.pause(0.05)
+                            if hold in str(app.query_one("#status-text").render()):
+                                break
+                        await during(app, pilot)
+                        return
                     if inspect:
                         for _ in range(50):
                             await pilot.pause(0.05)
@@ -2773,6 +2785,68 @@ class TuiStepsTest(IsolatedCache, unittest.TestCase):
         with mock.patch.object(messages, "LANGUAGE", "es"):
             self.assertEqual(messages.t("log_busy_steps"), "Espera a que terminen la descarga, la conversion y la subida")
 
+    def logged(self, app):
+        return [line.text.strip() for line in app.query_one("#log").lines]
+
+    def test_quitting_during_the_download_stops_it_and_waits_for_it_before_closing(self):
+        async def quit_app(app, pilot):
+            await pilot.press("q")
+            await pilot.pause()
+            self.seen["log"] = self.logged(app)
+            await app.workers.wait_for_complete()
+
+        result, recognized = self.run_steps_app(
+            [("step", "download", 30.0, None)], None, hold="Downloading", during=quit_app,
+        )
+        self.assertTrue(self.seen["stopped"])
+        self.assertTrue(self.seen["thread_done"])
+        self.assertIn("Stopping...", self.seen["log"])
+        self.assertTrue(result.interrupted)
+        self.assertIsNone(result.error)
+        self.assertEqual(recognized, [])
+        self.assertEqual(self.checked, [])
+
+    def test_quitting_during_the_upload_asks_first_because_it_would_upload_again(self):
+        async def ask(app, pilot):
+            await pilot.press("q")
+            await pilot.pause()
+            await pilot.press("q")
+            await pilot.pause()
+            self.seen["asked"] = self.logged(app)
+            self.seen["stop_after_asking"] = self.seen["stop"].is_set()
+            await pilot.press("escape")
+            await pilot.pause()
+            self.seen["stop_after_escape"] = self.seen["stop"].is_set()
+            self.seen["after_escape"] = self.logged(app)
+            await pilot.press("q")
+            await pilot.press("y")
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+
+        result, _ = self.run_steps_app(
+            [("step", "upload", 20.0, None)], None, hold="Uploading", during=ask,
+        )
+        question = "The upload is half done: if you quit, it uploads again next time and uses quota. Press y to quit"
+        self.assertEqual(self.seen["asked"].count(question), 1)
+        self.assertFalse(self.seen["stop_after_asking"])
+        self.assertFalse(self.seen["stop_after_escape"])
+        self.assertIn("[*] cancelled", self.seen["after_escape"])
+        self.assertTrue(self.seen["stopped"])
+        self.assertTrue(self.seen["thread_done"])
+        self.assertTrue(result.interrupted)
+
+    def test_a_spanish_system_asks_before_abandoning_the_upload_and_says_it_is_stopping(self):
+        with mock.patch.object(messages, "LANGUAGE", "es"):
+            self.assertEqual(messages.t("log_stopping"), "Parando...")
+            self.assertEqual(
+                messages.t("log_quit_upload", yes="s"),
+                "La subida esta a medias: si sales, la proxima vez se subira de nuevo y gastara cuota. Pulsa s para salir",
+            )
+
+    def test_quitting_after_the_steps_finished_is_not_an_interruption(self):
+        result, _ = self.run_steps_app([], upload.Outcome(self.COPY, None, True, 600))
+        self.assertFalse(result.interrupted)
+
     def test_a_local_file_with_no_quota_closes_the_app_with_the_message_for_main_to_print(self):
         result, recognized = self.run_steps_app([], SystemExit("quota used up"))
         self.assertEqual(result.error, "quota used up")
@@ -2853,6 +2927,12 @@ class TuiWaitInMainTest(IsolatedUploads, IsolatedCache, unittest.TestCase):
 
     def test_quitting_the_tui_during_the_wait_prints_no_tracklist_and_offers_no_delete(self):
         errors = self.run_main(tui_result(interrupted=True))
+        self.assertIn("run 'tracklist https://www.youtube.com/watch?v=tZ6YRoNjvPI' again", errors)
+        self.assertEqual(self.calls["render"], [])
+        self.assertEqual(self.calls["deleted"], [])
+
+    def test_quitting_the_tui_during_the_steps_prints_the_same_resume_hint_and_no_tracklist(self):
+        errors = self.run_main(tui_result(interrupted=True, found=[], video_id="orig1234567"))
         self.assertIn("run 'tracklist https://www.youtube.com/watch?v=tZ6YRoNjvPI' again", errors)
         self.assertEqual(self.calls["render"], [])
         self.assertEqual(self.calls["deleted"], [])
