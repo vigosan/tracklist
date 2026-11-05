@@ -2637,14 +2637,15 @@ class TuiStepsTest(IsolatedCache, unittest.TestCase):
     ORIGINAL = "orig1234567"
     COPY = "copia123456"
 
-    def run_steps_app(self, script, outcome, waiting_after=False, inspect=None, keys=(), hold=None, during=None):
+    def run_steps_app(self, script, outcome, waiting_after=False, inspect=None, keys=(), hold=None, during=None, job=None, after_keys=()):
         from textual.app import App
 
         release = threading.Event()
         self.checked = []
         self.seen = {}
         recognized = []
-        job = upload.Job(self.ORIGINAL, "Set", None, None, True, None)
+        self.clipboard = []
+        job = job or upload.Job(self.ORIGINAL, "Set", None, None, True, None)
         self.needs_wait_args = []
         self.claim_owns = []
         self.steps_calls = 0
@@ -2697,10 +2698,13 @@ class TuiStepsTest(IsolatedCache, unittest.TestCase):
                         release.set()
                     await app.workers.wait_for_complete()
                     self.seen["log"] = [line.text.strip() for line in app.query_one("#log").lines]
+                    for key in after_keys:
+                        await pilot.press(key)
                     await pilot.press("q")
             asyncio.run(scenario())
 
         with mock.patch.object(upload, "run_steps", fake_steps), \
+                mock.patch.object(recognize_tui.subprocess, "run", lambda command, **kwargs: self.clipboard.append(kwargs["input"].decode())), \
                 mock.patch.object(upload, "needs_wait", lambda video_id: self.needs_wait_args.append(video_id) or waiting_after), \
                 mock.patch.object(upload, "youtube_client", lambda: "client"), \
                 mock.patch.object(upload, "processing_details", details), \
@@ -2711,7 +2715,7 @@ class TuiStepsTest(IsolatedCache, unittest.TestCase):
                 mock.patch.object(tracklist, "recognize_gaps_async", recognition), \
                 mock.patch.object(tracklist, "notify_ready", lambda title: None), \
                 mock.patch.object(App, "run", drive):
-            result = recognize_tui.run_app(self.ORIGINAL, None, False, True, job=job)
+            result = recognize_tui.run_app(job.original_id, None, False, True, job=job)
         return result, recognized
 
     def test_the_status_and_the_bar_follow_the_running_step(self):
@@ -2739,6 +2743,12 @@ class TuiStepsTest(IsolatedCache, unittest.TestCase):
         self.assertLess(log.index("Converting"), log.index("Uploading"))
         self.assertIn(f"Uploaded as https://youtu.be/{self.COPY}", log)
         self.assertIn("careful now", log)
+
+    def test_the_copied_link_of_a_local_file_is_the_uploaded_copy_since_it_has_no_original(self):
+        source = Path("/tmp/set.m4a")
+        job = upload.Job(None, None, source, None, True, source)
+        self.run_steps_app([], upload.Outcome(self.COPY, None, True, 600), job=job, after_keys=("c",))
+        self.assertIn(f"https://www.youtube.com/watch?v={self.COPY}", self.clipboard[0])
 
     def test_the_steps_get_the_job_and_a_stop_event(self):
         self.run_steps_app([], upload.Outcome(self.COPY, None, True, 600))

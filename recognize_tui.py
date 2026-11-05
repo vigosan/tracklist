@@ -256,6 +256,7 @@ def run_app(video_id, duration, label, own=False, waiting=False, job=None, shown
             self.job = None
             self.steps_pending = False
             self.video_id = outcome.video_id
+            self.shown_id = self.shown_id or outcome.video_id
             self.result_id = outcome.video_id
             self.own = outcome.own
             self.duration = self.duration or outcome.duration
