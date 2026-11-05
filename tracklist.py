@@ -657,7 +657,7 @@ def notify_ready(title, run=subprocess.run):
 
 def terminal_progress(stream=None):
     stream = stream or sys.stderr
-    labels = {"download": "step_download", "convert": "converting", "upload": "uploading", "audio": "step_audio"}
+    labels = {"download": "step_download", "convert": "converting", "upload": "uploading", "audio": "phase_audio"}
     state = {"step": None, "open": False}
 
     def close_line():
@@ -672,13 +672,14 @@ def terminal_progress(stream=None):
             if stream.isatty():
                 if name != state["step"]:
                     close_line()
-                text = " ".join(part for part in (label, None if percent is None else f"{percent:.0f}%", detail) if part)
+                text = " ".join(part for part in (label, None if percent is None else f"{percent:.0f}%") if part)
+                text = f"{text} · {detail}" if detail else text
                 stream.write(f"\r{text}\x1b[K")
                 state["open"] = True
             elif name != state["step"]:
                 stream.write(f"{label}\n")
             state["step"] = name
-        elif event[0] == "warning" or event[1] == "upload":
+        elif event[0] == "warning" or (event[0] == "step-done" and event[1] == "upload"):
             close_line()
             state["step"] = None
             stream.write(event[1] if event[0] == "warning" else t("uploaded", video_id=event[2]))

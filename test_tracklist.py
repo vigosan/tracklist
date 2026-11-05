@@ -2198,7 +2198,7 @@ class TerminalProgressTest(unittest.TestCase):
     def test_the_detail_is_shown_next_to_the_percent(self):
         stream = self.Stream(True)
         tracklist.terminal_progress(stream)(("step", "download", 40.0, "2.1MiB/s"))
-        self.assertIn("40% 2.1MiB/s", stream.getvalue())
+        self.assertIn("40% · 2.1MiB/s", stream.getvalue())
 
     def test_finishing_ends_a_line_still_being_rewritten(self):
         stream = self.Stream(True)
@@ -2214,6 +2214,11 @@ class TerminalProgressTest(unittest.TestCase):
             progress(("step", "convert", percent, None))
         progress(("step", "upload", 3.0, None))
         self.assertEqual(stream.getvalue(), "Converting to video\nUploading to YouTube\n")
+
+    def test_the_audio_step_is_labelled_like_in_the_tui(self):
+        stream = self.Stream(False)
+        tracklist.terminal_progress(stream)(("step", "audio", 1.0, None))
+        self.assertEqual(stream.getvalue(), "Preparing the audio\n")
 
     def test_only_a_finished_upload_says_uploaded(self):
         stream = self.Stream(False)
@@ -2813,11 +2818,11 @@ class TuiStepsTest(IsolatedCache, unittest.TestCase):
                 upload.Outcome(self.COPY, None, True, 600), inspect=inspect, keys=(key,),
             )
             self.assertEqual(self.steps_calls, 1)
-            self.assertEqual(self.seen["busy_log"].count("Wait until the download, conversion and upload finish"), 1)
+            self.assertEqual(self.seen["busy_log"].count("[!] wait until the download, conversion and upload finish"), 1)
 
     def test_a_spanish_system_explains_why_the_keys_are_ignored(self):
         with mock.patch.object(messages, "LANGUAGE", "es"):
-            self.assertEqual(messages.t("log_busy_steps"), "Espera a que terminen la descarga, la conversion y la subida")
+            self.assertEqual(messages.t("log_busy_steps"), "[!] espera a que terminen la descarga, la conversion y la subida")
 
     def logged(self, app):
         return [line.text.strip() for line in app.query_one("#log").lines]
@@ -2835,7 +2840,7 @@ class TuiStepsTest(IsolatedCache, unittest.TestCase):
         self.assertTrue(self.seen["stopped"])
         self.assertTrue(self.seen["thread_done"])
         self.assertTrue(self.seen["done_at_exit"])
-        self.assertIn("Stopping...", self.seen["log"])
+        self.assertIn("[*] stopping...", self.seen["log"])
         self.assertTrue(result.interrupted)
         self.assertIsNone(result.error)
         self.assertEqual(recognized, [])
@@ -2875,7 +2880,7 @@ class TuiStepsTest(IsolatedCache, unittest.TestCase):
         result, _ = self.run_steps_app(
             [("step", "upload", 20.0, None)], None, hold="Uploading", during=ask,
         )
-        question = "The upload is half done: if you quit, it uploads again next time and uses quota. Press y to quit"
+        question = "[!] the upload is half done: if you quit, it uploads again next time and uses quota. Press y to quit"
         self.assertEqual(self.seen["asked"].count(question), 1)
         self.assertFalse(self.seen["stop_after_asking"])
         self.assertFalse(self.seen["stop_after_escape"])
@@ -2897,7 +2902,7 @@ class TuiStepsTest(IsolatedCache, unittest.TestCase):
             None, hold="Uploading", during=quit_app,
         )
         self.assertTrue(self.seen["stop_set"])
-        self.assertIn("Stopping...", self.seen["log"])
+        self.assertIn("[*] stopping...", self.seen["log"])
         self.assertTrue(result.interrupted)
 
     def test_a_quit_question_is_dropped_when_the_steps_end_so_the_other_keys_work_again(self):
@@ -2917,10 +2922,10 @@ class TuiStepsTest(IsolatedCache, unittest.TestCase):
 
     def test_a_spanish_system_asks_before_abandoning_the_upload_and_says_it_is_stopping(self):
         with mock.patch.object(messages, "LANGUAGE", "es"):
-            self.assertEqual(messages.t("log_stopping"), "Parando...")
+            self.assertEqual(messages.t("log_stopping"), "[*] parando...")
             self.assertEqual(
                 messages.t("log_quit_upload", yes="s"),
-                "La subida esta a medias: si sales, la proxima vez se subira de nuevo y gastara cuota. Pulsa s para salir",
+                "[!] la subida esta a medias: si sales, la proxima vez se subira de nuevo y gastara cuota. Pulsa s para salir",
             )
 
     def test_quitting_after_the_steps_finished_is_not_an_interruption(self):
