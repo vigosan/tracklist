@@ -14,7 +14,7 @@ https://www.youtube.com/watch?v=XXXXXXXXXXX
 2 identified, 1 suggested, 1 gaps (02:35 unidentified of 15:40)
 ```
 
-![tracklist analysing a DJ set in the terminal](docs/screenshot.png)
+![tracklist analysing a DJ set in the terminal](assets/screenshot.png)
 
 ## How it works
 
