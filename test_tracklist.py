@@ -2080,6 +2080,11 @@ class PlanJobTest(StepFakes, unittest.TestCase):
         job = self.plan(None, source)
         self.assertEqual((job.local, job.audio, job.copy, job.own), (source, source, None, True))
 
+    def test_a_local_recording_is_titled_after_its_file_since_that_heads_the_tracklist(self):
+        source = self.root / "Spook Multiespacio 3.m4a"
+        source.write_bytes(b"audio")
+        self.assertEqual(self.plan(None, source).title, "Spook Multiespacio 3")
+
     def test_a_local_recording_uploaded_before_is_not_uploaded_again(self):
         source = self.root / "Spook Multiespacio 3.m4a"
         source.write_bytes(b"audio")
@@ -2831,6 +2836,12 @@ class TuiStepsTest(IsolatedCache, unittest.TestCase):
         job = upload.Job(None, None, source, None, True, source)
         self.run_steps_app([], upload.Outcome(self.COPY, None, True, 600), job=job, after_keys=("c",))
         self.assertIn(f"https://www.youtube.com/watch?v={self.COPY}", self.clipboard[0])
+
+    def test_the_copied_tracklist_of_a_local_file_is_headed_by_its_title(self):
+        source = Path("/tmp/set.m4a")
+        job = upload.Job(None, "set", source, None, True, source)
+        self.run_steps_app([], upload.Outcome(self.COPY, None, True, 600), job=job, after_keys=("c",))
+        self.assertEqual(self.clipboard[0].splitlines()[0], "set")
 
     def test_the_steps_get_the_job_and_a_stop_event(self):
         self.run_steps_app([], upload.Outcome(self.COPY, None, True, 600))

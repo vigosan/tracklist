@@ -433,7 +433,7 @@ def plan_job(video_id=None, local=None, report=print_stderr):
         copy = known_upload(local)
         if copy:
             report(t("already_uploaded", video_id=copy))
-        return Job(None, None, local, copy, True, local)
+        return Job(None, local.stem, local, copy, True, local)
     shazam_only = Job(video_id, None, None, None, False, None)
     try:
         client = youtube_client()

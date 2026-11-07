@@ -166,7 +166,7 @@ def run_app(video_id, duration, label, own=False, waiting=False, job=None, shown
             self.gaps = []
             self.duration = duration
             self.label = label
-            self.title_line = None
+            self.title_line = job.title if job else None
             self.error = None
             self.session = None
             self.suggestions = []
@@ -328,7 +328,7 @@ def run_app(video_id, duration, label, own=False, waiting=False, job=None, shown
         async def resolve_duration(self):
             cached = tracklist.load_cache(self.video_id)
             if cached["duration"]:
-                self.title_line = cached["title"]
+                self.title_line = cached["title"] or self.title_line
                 self.duration = cached["duration"]
                 return
             if self.session is not None:
