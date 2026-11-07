@@ -59,11 +59,11 @@ Then run `tracklist <URL>` as usual. The first time, tracklist does a one-time s
 
 1. **Allow access to the browser's cookies.** macOS asks for your keychain password so tracklist can read the browser's YouTube session. Choose "Always Allow" so it doesn't ask on every run.
 2. **Create your own Google credential.** tracklist uploads to your channel through your own Google project, which is free. A wizard opens each Google Cloud page for you and tells you what to do:
-   1. Create a project (any name).
-   2. Enable the YouTube Data API v3 (click Enable).
-   3. Fill in the app name and email, with audience External.
-   4. Click "Publish app" so the login doesn't expire every 7 days. Google shows an unverified app warning: it's your own app.
-   5. Create an OAuth client of type "Desktop app" and download the JSON.
+   1. Create a project: type `tracklist` as the project name and click Create.
+   2. Enable the YouTube Data API v3: click Enable.
+   3. Set up the app: type `tracklist` as the app name, pick your own email as the support email and as the contact email, and choose audience External.
+   4. Click "Publish app" so the login doesn't expire every 7 days. Google shows an unverified app warning: it's your own app, so continue.
+   5. Create an OAuth client: choose "Desktop app" as the type, type `tracklist` as the name, click Create and download the JSON.
 
    Back in the terminal, press Enter and tracklist picks up the new `client_secret*.json` from `~/Downloads`, or paste the JSON's path.
 3. **Authorise tracklist.** Your browser opens so you can sign in with Google and approve access. The permission Google asks for (`youtube`) gives tracklist control of your channel; it only uploads private copies and deletes the copies it uploaded.
