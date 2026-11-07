@@ -916,6 +916,16 @@ class ConvertToVideoTest(LocalAudio, unittest.TestCase):
         upload.convert_to_video(self.source, target)
         self.assertEqual(ffprobe_streams(target), ["aac,audio", "h264,video"])
 
+    def test_the_picture_is_the_recording_waveform_instead_of_a_black_frame(self):
+        target = self.root / "out.mp4"
+        upload.convert_to_video(self.source, target)
+        frame = subprocess.run(
+            ["ffmpeg", "-v", "error", "-i", str(target), "-frames:v", "1",
+             "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+            capture_output=True, check=True,
+        ).stdout
+        self.assertGreater(max(frame), 128)
+
 
 class LocalDurationTest(LocalAudio, unittest.TestCase):
     def test_the_length_comes_from_the_file_since_a_private_video_may_be_unreadable(self):

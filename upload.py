@@ -21,9 +21,16 @@ CLAIMS_TIMEOUT = 3600
 
 
 def convert_to_video(source, target):
+    waveform = target.with_suffix(".png")
+    subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-i", str(source),
+         "-filter_complex", "[0:a]showwavespic=s=640x360:colors=white[v]",
+         "-map", "[v]", "-frames:v", "1", str(waveform)],
+        check=True, capture_output=True,
+    )
     subprocess.run(
         ["ffmpeg", "-y", "-v", "error",
-         "-f", "lavfi", "-i", "color=c=black:s=640x360:r=1",
+         "-loop", "1", "-framerate", "1", "-i", str(waveform),
          "-i", str(source),
          "-map", "0:v", "-map", "1:a",
          "-c:v", "libx264", "-tune", "stillimage", "-pix_fmt", "yuv420p",
