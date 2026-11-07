@@ -160,9 +160,16 @@ def download_foreign(video_id, progress=None, stop=None):
 
 
 def convert_to_video(source, target, duration=None, progress=None, stop=None):
+    waveform = target.with_suffix(".png")
+    run_tracked(
+        ["ffmpeg", "-y", "-v", "error", "-i", str(source),
+         "-filter_complex", "[0:a]showwavespic=s=640x360:colors=white[v]",
+         "-map", "[v]", "-frames:v", "1", str(waveform)],
+        lambda line: None, None, stop,
+    )
     run_tracked(
         ["ffmpeg", "-y", "-v", "error", "-progress", "pipe:1", "-nostats",
-         "-f", "lavfi", "-i", "color=c=black:s=640x360:r=1",
+         "-loop", "1", "-framerate", "1", "-i", str(waveform),
          "-i", str(source),
          "-map", "0:v", "-map", "1:a",
          "-c:v", "libx264", "-tune", "stillimage", "-pix_fmt", "yuv420p",
