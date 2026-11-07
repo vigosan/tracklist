@@ -20,7 +20,7 @@ https://www.youtube.com/watch?v=XXXXXXXXXXX
 2. **Your video or someone else's.** Studio only shows claims for videos on your own channel:
    - **Your video:** the claims are read straight away.
    - **Someone else's video:** tracklist downloads the audio with `yt-dlp`, uploads it as a **private** video to your channel through the YouTube Data API, waits for processing and for Content ID to finish (up to an hour), and then reads the claims of that copy.
-   - **A local audio file:** it is converted to a video with `ffmpeg` and uploaded the same way.
+   - **A local audio file:** it is converted to a video with `ffmpeg` (the picture is the recording's waveform) and uploaded the same way.
 3. **Shazam for the gaps.** Any stretch of 90 seconds or more without a claim is sampled every 90 seconds (10-second clips) and recognised with Shazam. Shazam matches are marked with `(?)`, merged with neighbouring samples of the same track, and dropped when they repeat a claimed track. Whatever stays unidentified is listed as `?????` with its time range.
 4. **Fallback.** For a YouTube URL, if nothing can be uploaded (upload quota used up, no Google login, download failed, no Studio session), tracklist scans the whole video with Shazam alone. A local file has no video to fall back on, so with the quota used up tracklist stops.
 5. **Cleanup.** At the end it offers to delete the private copy it uploaded.
@@ -49,10 +49,21 @@ You need a YouTube channel on your Google account: Content ID claims and uploads
 
 ## Usage
 
+Tell tracklist what to analyse in one argument, either a YouTube video or an audio file on your Mac:
+
+- **A YouTube video:** paste its URL or just the 11-character video ID. Any form works (`watch?v=`, `youtu.be/`, a Studio link).
+- **A local audio file:** give its path, for example `tracklist ~/Music/set.mp3`. Any format `ffmpeg` reads works (mp3, m4a, wav, flac...). Quote the path if it has spaces, or drag the file from Finder into the terminal.
+- **Nothing:** run `tracklist` alone and it asks for the URL, ID or file path.
+
+The tracklist starts with the video's title (for a local file, its file name without the extension), then the link, and `c` in the terminal UI copies all of it.
+
 ```bash
 tracklist https://www.youtube.com/watch?v=XXXXXXXXXXX   # your own video
 tracklist https://www.youtube.com/watch?v=YYYYYYYYYYY   # someone else's video
+tracklist XXXXXXXXXXX                                    # the same, by video ID
 tracklist set.mp3                                        # a local audio file
+tracklist "~/Music/Sunday Session.m4a"                   # a path with spaces
+tracklist                                                # asks what to analyse
 tracklist <URL> --browser brave                          # choose the browser
 tracklist <URL> --fresh                                  # ignore any previous analysis
 tracklist <URL> --label                                  # show each track's record label
