@@ -14,6 +14,8 @@ https://www.youtube.com/watch?v=XXXXXXXXXXX
 2 identified, 1 suggested, 1 gaps (02:35 unidentified of 15:40)
 ```
 
+![tracklist analysing a DJ set in the terminal](docs/screenshot.png)
+
 ## How it works
 
 1. **Content ID claims.** When a video contains copyrighted music, YouTube's Content ID attaches a claim to it with the song, artist, label and the exact position in the video. tracklist reads these claims from YouTube Studio using your browser's YouTube session, so you never have to copy cookies or a cURL command by hand.
