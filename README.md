@@ -50,12 +50,25 @@ tracklist reads the YouTube session of a browser where you are signed in, so it 
 
 ## First run
 
-You need a YouTube channel on your Google account: Content ID claims and uploads live there.
+Before you start, make sure you have:
 
-1. Sign in to YouTube in your browser (see [Which browser](#which-browser)).
-2. macOS asks for your keychain password so tracklist can read the browser's cookies: choose "Always Allow" so it doesn't ask on every run.
-3. A wizard walks you through creating your own Google credential: a Google Cloud project with the YouTube Data API v3 enabled and an OAuth client of type "Desktop app".
-4. Your browser opens so you can sign in with Google and authorise access. The permission Google asks for (`youtube`) gives tracklist control of your channel; it only uploads private copies and deletes the copies it uploaded.
+- a YouTube channel on your Google account, because Content ID claims and uploads live there
+- that Google account signed in to YouTube in your browser (see [Which browser](#which-browser))
+
+Then run `tracklist <URL>` as usual. The first time, tracklist does a one-time setup that takes about 5 minutes and is never asked again:
+
+1. **Allow access to the browser's cookies.** macOS asks for your keychain password so tracklist can read the browser's YouTube session. Choose "Always Allow" so it doesn't ask on every run.
+2. **Create your own Google credential.** tracklist uploads to your channel through your own Google project, which is free. A wizard opens each Google Cloud page for you and tells you what to do:
+   1. Create a project (any name).
+   2. Enable the YouTube Data API v3 (click Enable).
+   3. Fill in the app name and email, with audience External.
+   4. Click "Publish app" so the login doesn't expire every 7 days. Google shows an unverified app warning: it's your own app.
+   5. Create an OAuth client of type "Desktop app" and download the JSON.
+
+   Back in the terminal, press Enter and tracklist picks up the new `client_secret*.json` from `~/Downloads`, or paste the JSON's path.
+3. **Authorise tracklist.** Your browser opens so you can sign in with Google and approve access. The permission Google asks for (`youtube`) gives tracklist control of your channel; it only uploads private copies and deletes the copies it uploaded.
+
+After that, tracklist starts analysing the video.
 
 ## Usage
 
