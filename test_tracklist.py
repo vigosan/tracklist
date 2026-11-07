@@ -1187,6 +1187,29 @@ class RefreshKeyTest(unittest.TestCase):
         self.assertEqual(gaps, [(300, 600)])
 
 
+class CopiedTitleTest(IsolatedCache, unittest.TestCase):
+    def test_a_known_length_does_not_lose_the_cached_title_that_heads_the_tracklist(self):
+        from textual.app import App
+
+        tracklist.save_video_details("dnS4s0gar-4", "Spook Multiespacio 3", 600)
+
+        async def no_recognition(video_id, gaps, progress, resume=None):
+            return []
+
+        def drive(app, *args, **kwargs):
+            async def scenario():
+                async with app.run_test() as pilot:
+                    await app.workers.wait_for_complete()
+                    await pilot.press("q")
+            asyncio.run(scenario())
+
+        with mock.patch.object(tracklist, "try_claims", lambda video_id: ({}, [])), \
+                mock.patch.object(tracklist, "recognize_gaps_async", no_recognition), \
+                mock.patch.object(App, "run", drive):
+            _, _, _, _, title, _ = recognize_tui.run_app("dnS4s0gar-4", 600, False)
+        self.assertEqual(title, "Spook Multiespacio 3")
+
+
 class OfferDeleteTest(IsolatedUploads, unittest.TestCase):
     def setUp(self):
         super().setUp()

@@ -659,6 +659,7 @@ def main():
     if local:
         upload.place_audio(local, video_id)
         args.duration = args.duration or upload.local_duration(local)
+        save_video_details(video_id, local.stem, args.duration)
 
     if not args.from_json and args.recognize and recognition_available():
         import recognize_ui
@@ -677,7 +678,7 @@ def main():
             upload.offer_delete(video_id)
             return
 
-    title = None
+    title = load_cache(video_id)["title"]
     duration = args.duration
     if args.from_json:
         entries = extract(json.loads(Path(args.from_json).read_text()))

@@ -165,6 +165,7 @@ def run_app(video_id, duration, label):
             )
             self.on_progress(("claims", len(self.entries)))
             self.state["phase"] = "video" if self.entries else "probe"
+            self.title_line = tracklist.load_cache(self.video_id)["title"]
             if self.duration is None:
                 await self.resolve_duration()
             if self.duration is None:
@@ -188,7 +189,6 @@ def run_app(video_id, duration, label):
         async def resolve_duration(self):
             cached = tracklist.load_cache(self.video_id)
             if cached["duration"]:
-                self.title_line = cached["title"]
                 self.duration = cached["duration"]
                 return
             if self.session is not None:
