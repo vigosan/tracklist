@@ -773,9 +773,14 @@ class ArgumentsTest(unittest.TestCase):
         self.assertTrue(tracklist.build_parser().parse_args(["vid12345678", "--fresh"]).fresh)
 
     def test_help_follows_the_system_language(self):
-        self.assertIn("URL or ID of the video, or an audio file", tracklist.build_parser().format_help())
+        self.assertIn("URL or ID of the video", tracklist.build_parser().format_help())
         with mock.patch.object(messages, "LANGUAGE", "es"):
-            self.assertIn("URL o ID del video, o fichero de audio", tracklist.build_parser().format_help())
+            self.assertIn("URL o ID del video", tracklist.build_parser().format_help())
+
+    def test_help_tells_how_to_update_in_either_language(self):
+        self.assertIn("'update' to update tracklist", " ".join(tracklist.build_parser().format_help().split()))
+        with mock.patch.object(messages, "LANGUAGE", "es"):
+            self.assertIn("'update' para actualizar tracklist", " ".join(tracklist.build_parser().format_help().split()))
 
     def test_help_says_it_takes_my_videos_other_peoples_and_local_files(self):
         description = " ".join(tracklist.build_parser().format_help().split())
@@ -2394,6 +2399,40 @@ class FromJsonTest(unittest.TestCase):
         self.assertEqual(planned, [])
         self.assertIn("La Luna - Kisses of Fire", output.getvalue())
         self.assertIn("watch?v=orig1234567", output.getvalue())
+
+
+class UpdateCommandTest(unittest.TestCase):
+    def update(self, result=None, error=None):
+        calls = []
+
+        def fake_run(command, **kwargs):
+            calls.append(command)
+            if error:
+                raise error
+            return result
+
+        with mock.patch("sys.argv", ["tracklist", "update"]), \
+                mock.patch.object(tracklist, "missing_tools", lambda: ["yt-dlp"]), \
+                mock.patch.object(tracklist.subprocess, "run", fake_run):
+            try:
+                tracklist.main()
+                code = None
+            except SystemExit as stop:
+                code = stop.code
+        return calls, code
+
+    def test_update_reinstalls_the_latest_version_from_github_with_uv(self):
+        calls, code = self.update(mock.Mock(returncode=0))
+        self.assertEqual(calls, [["uv", "tool", "install", "--force", "git+https://github.com/vigosan/tracklist"]])
+        self.assertIsNone(code)
+
+    def test_a_failed_install_exits_with_the_status_uv_reported(self):
+        _, code = self.update(mock.Mock(returncode=2))
+        self.assertEqual(code, 2)
+
+    def test_without_uv_it_says_how_to_get_it(self):
+        _, code = self.update(error=FileNotFoundError())
+        self.assertIn("brew install uv", code)
 
 
 class LocalFileTest(unittest.TestCase):

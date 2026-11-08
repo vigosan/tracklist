@@ -38,7 +38,7 @@ brew install yt-dlp ffmpeg uv
 uv tool install git+https://github.com/vigosan/tracklist
 ```
 
-To update: `uv tool install --force git+https://github.com/vigosan/tracklist`.
+To update, run `tracklist update`.
 
 ## Which browser
 

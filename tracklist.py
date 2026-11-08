@@ -20,6 +20,7 @@ from messages import t
 
 BASE = "https://studio.youtube.com/youtubei/v1/creator"
 ORIGIN = "https://studio.youtube.com"
+REPOSITORY = "https://github.com/vigosan/tracklist"
 STUDIO_CLIENT_VERSION = "1.20260805.02.02"
 CLAIMS_ENDPOINT = f"{BASE}/list_creator_received_claims?alt=json"
 VIDEOS_ENDPOINT = f"{BASE}/get_creator_videos?alt=json"
@@ -709,7 +710,19 @@ def terminal_progress(stream=None):
     return progress
 
 
+def update():
+    try:
+        result = subprocess.run(["uv", "tool", "install", "--force", f"git+{REPOSITORY}"])
+    except FileNotFoundError:
+        sys.exit(t("update_no_uv"))
+    if result.returncode:
+        sys.exit(result.returncode)
+
+
 def main():
+    if sys.argv[1:] == ["update"]:
+        update()
+        return
     absent = missing_tools()
     if absent:
         sys.exit(t("tools_missing", tools=", ".join(absent)))
