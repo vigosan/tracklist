@@ -3,6 +3,7 @@ import argparse
 import asyncio
 import bisect
 import hashlib
+import importlib.metadata
 import json
 import re
 import shutil
@@ -21,6 +22,9 @@ from messages import t
 BASE = "https://studio.youtube.com/youtubei/v1/creator"
 ORIGIN = "https://studio.youtube.com"
 REPOSITORY = "https://github.com/vigosan/tracklist"
+LATEST_COMMIT_URL = "https://api.github.com/repos/vigosan/tracklist/commits/main"
+UPDATE_CHECK_INTERVAL = 24 * 3600
+UPDATE_CHECK_TIMEOUT = 2
 STUDIO_CLIENT_VERSION = "1.20260805.02.02"
 CLAIMS_ENDPOINT = f"{BASE}/list_creator_received_claims?alt=json"
 VIDEOS_ENDPOINT = f"{BASE}/get_creator_videos?alt=json"
@@ -176,11 +180,15 @@ def load_config():
         return {}
 
 
+def save_config(config):
+    CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    CONFIG_FILE.write_text(json.dumps(config))
+
+
 def save_browser(browser):
     config = load_config()
     config["browser"] = browser
-    CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-    CONFIG_FILE.write_text(json.dumps(config))
+    save_config(config)
 
 
 def current_browser():
@@ -710,6 +718,36 @@ def terminal_progress(stream=None):
     return progress
 
 
+def installed_commit():
+    try:
+        record = importlib.metadata.distribution("tracklist").read_text("direct_url.json")
+        return json.loads(record)["vcs_info"]["commit_id"]
+    except (importlib.metadata.PackageNotFoundError, TypeError, KeyError, ValueError):
+        return None
+
+
+def latest_commit():
+    request = urllib.request.Request(LATEST_COMMIT_URL, headers={"Accept": "application/vnd.github.sha"})
+    try:
+        with urllib.request.urlopen(request, timeout=UPDATE_CHECK_TIMEOUT) as response:
+            return response.read().decode().strip()
+    except (OSError, ValueError):
+        return None
+
+
+def update_notice():
+    installed = installed_commit()
+    config = load_config()
+    if not installed or time.time() - config.get("update_checked", 0) < UPDATE_CHECK_INTERVAL:
+        return None
+    config["update_checked"] = time.time()
+    save_config(config)
+    latest = latest_commit()
+    if latest and latest != installed:
+        return t("update_available")
+    return None
+
+
 def update():
     try:
         result = subprocess.run(["uv", "tool", "install", "--force", f"git+{REPOSITORY}"])
@@ -723,6 +761,9 @@ def main():
     if sys.argv[1:] == ["update"]:
         update()
         return
+    notice = update_notice()
+    if notice:
+        print(notice, file=sys.stderr)
     absent = missing_tools()
     if absent:
         sys.exit(t("tools_missing", tools=", ".join(absent)))

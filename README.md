@@ -38,7 +38,7 @@ brew install yt-dlp ffmpeg uv
 uv tool install git+https://github.com/vigosan/tracklist
 ```
 
-To update, run `tracklist update`.
+To update, run `tracklist update`. Once a day, when you open tracklist, it checks GitHub for a newer version and prints a one-line reminder if there is one (it never updates by itself; offline, it skips the check).
 
 ## Which browser
 

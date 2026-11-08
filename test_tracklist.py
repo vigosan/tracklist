@@ -19,6 +19,12 @@ import messages
 import recognize_tui
 import recognize_ui
 import tracklist
+
+
+def setUpModule():
+    patch = mock.patch.object(tracklist, "update_notice", lambda: None)
+    patch.start()
+    unittest.addModuleCleanup(patch.stop)
 import upload
 
 
@@ -2399,6 +2405,104 @@ class FromJsonTest(unittest.TestCase):
         self.assertEqual(planned, [])
         self.assertIn("La Luna - Kisses of Fire", output.getvalue())
         self.assertIn("watch?v=orig1234567", output.getvalue())
+
+
+class UpdateNoticeTest(unittest.TestCase):
+    INSTALLED = "a" * 40
+    NEWER = "b" * 40
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.original = (tracklist.CONFIG_FILE, tracklist.update_notice, tracklist.installed_commit, tracklist.latest_commit)
+        tracklist.CONFIG_FILE = Path(tmp.name) / "config.json"
+        self.fetches = 0
+        self.latest = self.NEWER
+        self.installed = self.INSTALLED
+        self.clock = 1_000_000
+
+        def fetch():
+            self.fetches += 1
+            return self.latest
+
+        tracklist.update_notice = self.original[1]
+        tracklist.installed_commit = lambda: self.installed
+        tracklist.latest_commit = fetch
+        self.addCleanup(self.restore)
+
+    def restore(self):
+        tracklist.CONFIG_FILE, tracklist.update_notice, tracklist.installed_commit, tracklist.latest_commit = self.original
+
+    def notice(self):
+        with mock.patch.object(tracklist.time, "time", lambda: self.clock):
+            return tracklist.update_notice()
+
+    def test_a_newer_version_on_github_points_to_the_update_command(self):
+        self.assertIn("tracklist update", self.notice())
+
+    def test_the_notice_follows_the_system_language(self):
+        with mock.patch.object(messages, "LANGUAGE", "es"):
+            self.assertIn("version nueva", self.notice())
+
+    def test_being_up_to_date_says_nothing(self):
+        self.latest = self.INSTALLED
+        self.assertIsNone(self.notice())
+
+    def test_a_checkout_that_was_not_installed_from_git_never_looks_online(self):
+        self.installed = None
+        self.assertIsNone(self.notice())
+        self.assertEqual(self.fetches, 0)
+
+    def test_github_is_asked_once_a_day_so_opening_stays_instant(self):
+        self.notice()
+        self.clock += 3600
+        self.assertIsNone(self.notice())
+        self.assertEqual(self.fetches, 1)
+
+    def test_the_next_day_it_looks_again(self):
+        self.notice()
+        self.clock += 24 * 3600
+        self.assertIn("tracklist update", self.notice())
+        self.assertEqual(self.fetches, 2)
+
+    def test_being_offline_says_nothing_and_is_not_retried_on_every_run(self):
+        self.latest = None
+        self.assertIsNone(self.notice())
+        self.assertIsNone(self.notice())
+        self.assertEqual(self.fetches, 1)
+
+    def test_checking_keeps_the_saved_browser(self):
+        tracklist.save_browser("brave")
+        self.notice()
+        self.assertEqual(tracklist.load_config()["browser"], "brave")
+
+    def test_the_installed_commit_is_the_one_uv_recorded(self):
+        record = json.dumps({"vcs_info": {"vcs": "git", "commit_id": self.INSTALLED}})
+        with mock.patch("importlib.metadata.distribution", return_value=mock.Mock(read_text=lambda name: record)):
+            self.assertEqual(self.original[2](), self.INSTALLED)
+
+    def test_without_a_vcs_record_there_is_no_installed_commit(self):
+        with mock.patch("importlib.metadata.distribution", return_value=mock.Mock(read_text=lambda name: None)):
+            self.assertIsNone(self.original[2]())
+
+    def test_a_network_failure_leaves_the_latest_commit_unknown(self):
+        with mock.patch.object(tracklist.urllib.request, "urlopen", side_effect=urllib.error.URLError("offline")):
+            self.assertIsNone(self.original[3]())
+
+    def test_the_latest_commit_is_read_from_the_github_api(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = f"{self.NEWER}\n".encode()
+        with mock.patch.object(tracklist.urllib.request, "urlopen", return_value=response):
+            self.assertEqual(self.original[3](), self.NEWER)
+
+    def test_opening_prints_the_notice_before_anything_else(self):
+        errors = io.StringIO()
+        with mock.patch("sys.argv", ["tracklist"]), \
+                mock.patch.object(tracklist, "missing_tools", lambda: []), \
+                mock.patch.object(tracklist, "update_notice", lambda: "NOTICE"), \
+                contextlib.redirect_stderr(errors), self.assertRaises(SystemExit):
+            tracklist.main()
+        self.assertTrue(errors.getvalue().startswith("NOTICE"))
 
 
 class UpdateCommandTest(unittest.TestCase):
