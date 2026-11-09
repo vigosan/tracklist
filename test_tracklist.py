@@ -456,6 +456,35 @@ class AudioCacheDirTest(unittest.TestCase):
         self.assertEqual(path, self.home / ".cache" / "tracklist")
 
 
+class InstallHintTest(unittest.TestCase):
+    def test_macos_installs_with_homebrew_and_ffprobe_comes_with_ffmpeg(self):
+        hint = tracklist.install_hint(["yt-dlp", "ffmpeg", "ffprobe"], "darwin")
+        self.assertEqual(hint, "brew install yt-dlp ffmpeg")
+
+    def test_windows_installs_with_winget_package_ids(self):
+        hint = tracklist.install_hint(["yt-dlp", "ffprobe"], "win32")
+        self.assertEqual(hint, "winget install yt-dlp.yt-dlp Gyan.FFmpeg")
+
+    def test_linux_points_to_the_package_manager_instead_of_guessing_a_distro(self):
+        hint = tracklist.install_hint(["ffmpeg"], "linux")
+        self.assertIn("package manager", hint)
+        self.assertIn("ffmpeg", hint)
+        self.assertNotIn("brew", hint)
+
+    def test_the_missing_tools_exit_names_the_command_for_the_current_platform(self):
+        with mock.patch.object(tracklist.sys, "platform", "win32"):
+            message = tracklist.missing_tools_message(["yt-dlp"])
+        self.assertIn("winget install yt-dlp.yt-dlp", message)
+        self.assertNotIn("brew", message)
+
+    def test_yt_dlp_missing_on_windows_names_winget(self):
+        with mock.patch.object(tracklist.sys, "platform", "win32"), \
+                mock.patch.object(tracklist.subprocess, "run", side_effect=FileNotFoundError), \
+                self.assertRaises(SystemExit) as stop:
+            tracklist.browser_cookies("firefox")
+        self.assertIn("winget install yt-dlp.yt-dlp", str(stop.exception.code))
+
+
 class ClipboardCommandTest(unittest.TestCase):
     def available(self, *names):
         return lambda name: f"/bin/{name}" if name in names else None
@@ -2683,9 +2712,16 @@ class UpdateCommandTest(unittest.TestCase):
         _, code = self.update(mock.Mock(returncode=2))
         self.assertEqual(code, 2)
 
-    def test_without_uv_it_says_how_to_get_it(self):
-        _, code = self.update(error=FileNotFoundError())
+    def test_without_uv_on_macos_it_says_how_to_get_it_with_homebrew(self):
+        with mock.patch.object(tracklist.sys, "platform", "darwin"):
+            _, code = self.update(error=FileNotFoundError())
         self.assertIn("brew install uv", code)
+
+    def test_without_uv_on_windows_it_says_how_to_get_it_with_winget(self):
+        with mock.patch.object(tracklist.sys, "platform", "win32"):
+            _, code = self.update(error=FileNotFoundError())
+        self.assertIn("winget install astral-sh.uv", code)
+        self.assertNotIn("brew", code)
 
 
 class LocalFileTest(unittest.TestCase):

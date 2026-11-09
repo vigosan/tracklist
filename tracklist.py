@@ -157,7 +157,7 @@ def browser_cookies(browser):
                 command, capture_output=True, text=True, encoding="utf-8", errors="replace"
             )
         except FileNotFoundError:
-            sys.exit(t("ytdlp_missing"))
+            sys.exit(t("ytdlp_missing", hint=install_hint(["yt-dlp"])))
         if not jar_path.exists():
             if browser == "safari" and "Operation not permitted" in result.stderr:
                 sys.exit(t("safari_disk_access"))
@@ -688,6 +688,28 @@ def missing_tools(which=shutil.which):
     return [tool for tool in SYSTEM_TOOLS if not which(tool)]
 
 
+BREW_PACKAGES = {"yt-dlp": "yt-dlp", "ffmpeg": "ffmpeg", "ffprobe": "ffmpeg", "uv": "uv"}
+WINGET_PACKAGES = {
+    "yt-dlp": "yt-dlp.yt-dlp",
+    "ffmpeg": "Gyan.FFmpeg",
+    "ffprobe": "Gyan.FFmpeg",
+    "uv": "astral-sh.uv",
+}
+
+
+def install_hint(tools, platform=None):
+    platform = platform or sys.platform
+    packages = BREW_PACKAGES if platform == "darwin" else WINGET_PACKAGES
+    if platform not in ("darwin", "win32"):
+        return t("install_with_package_manager", tools=", ".join(dict.fromkeys(tools)))
+    names = " ".join(dict.fromkeys(packages[tool] for tool in tools))
+    return f"{'brew' if platform == 'darwin' else 'winget'} install {names}"
+
+
+def missing_tools_message(absent):
+    return t("tools_missing", tools=", ".join(absent), hint=install_hint(absent))
+
+
 def recognition_available():
     try:
         import shazamio  # noqa: F401
@@ -826,7 +848,7 @@ def update():
     try:
         result = subprocess.run(["uv", "tool", "install", "--force", f"git+{REPOSITORY}"])
     except FileNotFoundError:
-        sys.exit(t("update_no_uv"))
+        sys.exit(t("update_no_uv", hint=install_hint(["uv"])))
     if result.returncode:
         sys.exit(result.returncode)
 
@@ -840,7 +862,7 @@ def main():
         print(notice, file=sys.stderr)
     absent = missing_tools()
     if absent:
-        sys.exit(t("tools_missing", tools=", ".join(absent)))
+        sys.exit(missing_tools_message(absent))
     parser = build_parser()
     args = parser.parse_args()
 
