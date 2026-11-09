@@ -329,7 +329,7 @@ def find_client_secret(directory, since):
 def setup_credentials(open_url=webbrowser.open, ask=input, report=print_stderr,
                       downloads=Path.home() / "Downloads", clock=time.time):
     started = clock()
-    report(t("wizard_intro"))
+    report(t("wizard_intro", total=len(CONSOLE_STEPS)))
     ask(t("press_enter"))
     for number, (url, instruction) in enumerate(CONSOLE_STEPS, 1):
         report(t("wizard_step", number=number, total=len(CONSOLE_STEPS), instruction=t(instruction), url=url))

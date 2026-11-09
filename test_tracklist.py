@@ -3494,8 +3494,47 @@ class SetupCredentialsTest(unittest.TestCase):
         good = self.write_secret(self.root / "client_secret.json")
         with mock.patch.object(messages, "LANGUAGE", "es"):
             self.run_wizard([""] * 6 + [str(good)])
-        self.assertTrue(any("'App de escritorio' (Desktop app)" in m for m in self.reported))
+        self.assertTrue(any("App de escritorio (Desktop app)" in m for m in self.reported))
         self.assertTrue(any(m.startswith("Paso 1/5") for m in self.reported))
+
+    def step_text(self, number, language):
+        good = self.write_secret(self.root / "client_secret.json")
+        with mock.patch.object(messages, "LANGUAGE", language):
+            self.run_wizard([""] * 6 + [str(good)])
+        word = "Step" if language == "en" else "Paso"
+        return next(m for m in self.reported if m.startswith(f"{word} {number}/5"))
+
+    def test_the_app_setup_step_lists_each_google_screen_so_nobody_has_to_guess_what_comes_next(self):
+        text = self.step_text(3, "en")
+        for button in ("Get started", "External", "Next", "Create"):
+            self.assertIn(button, text)
+        self.assertGreaterEqual(text.count("\n    - "), 4)
+
+    def test_every_step_names_the_exact_button_to_press(self):
+        expected = {1: "Create", 2: "Enable", 4: "Publish app", 5: "Download JSON"}
+        for number, button in expected.items():
+            self.reported.clear()
+            self.assertIn(button, self.step_text(number, "en"))
+
+    def test_spanish_steps_pair_each_button_with_the_english_label_the_console_may_show(self):
+        text = self.step_text(5, "es")
+        self.assertIn("App de escritorio (Desktop app)", text)
+        self.assertIn("Descargar JSON (Download JSON)", text)
+
+    def test_the_wizard_warns_up_front_how_many_pages_open_and_that_the_unverified_warning_is_normal(self):
+        good = self.write_secret(self.root / "client_secret.json")
+        self.run_wizard([""] * 6 + [str(good)])
+        intro = self.reported[0]
+        self.assertIn("5 Google pages", intro)
+        self.assertIn("hasn't verified this app", intro)
+
+    def test_the_spanish_intro_gives_the_same_up_front_warning(self):
+        good = self.write_secret(self.root / "client_secret.json")
+        with mock.patch.object(messages, "LANGUAGE", "es"):
+            self.run_wizard([""] * 6 + [str(good)])
+        intro = self.reported[0]
+        self.assertIn("5 paginas de Google", intro)
+        self.assertIn("no ha verificado esta aplicacion", intro)
 
 
 class MissingToolsTest(unittest.TestCase):
