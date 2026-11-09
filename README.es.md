@@ -33,7 +33,13 @@ El progreso se guarda en caché, así que un análisis interrumpido continúa do
 
 ## Instalación
 
-Requiere macOS con Homebrew.
+Requiere macOS. Abre la Terminal, pega esta línea y pulsa Enter. Instala Homebrew si no lo tienes y después todo lo que tracklist necesita:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/vigosan/tracklist/main/install.sh | bash
+```
+
+Si ya usas Homebrew y prefieres hacerlo a mano:
 
 ```bash
 brew install yt-dlp ffmpeg uv
