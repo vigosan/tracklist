@@ -1334,5 +1334,45 @@ class FoldSuggestionsIntoClaimsTest(unittest.TestCase):
         self.assertEqual(tracklist.drop_claimed(claimed, [suggestion]), [suggestion])
 
 
+class ClipboardCommandTest(unittest.TestCase):
+    def available(self, *names):
+        return lambda name: f"/bin/{name}" if name in names else None
+
+    def test_macos_copies_with_pbcopy(self):
+        self.assertEqual(tracklist.clipboard_command("darwin", self.available()), ["pbcopy"])
+
+    def test_windows_copies_with_clip_so_the_tracklist_reaches_the_clipboard_off_macos(self):
+        self.assertEqual(tracklist.clipboard_command("win32", self.available()), ["clip"])
+
+    def test_linux_prefers_wayland_when_both_tools_exist(self):
+        command = tracklist.clipboard_command("linux", self.available("wl-copy", "xclip"))
+        self.assertEqual(command, ["wl-copy"])
+
+    def test_linux_falls_back_to_xclip_selecting_the_clipboard(self):
+        command = tracklist.clipboard_command("linux", self.available("xclip"))
+        self.assertEqual(command, ["xclip", "-selection", "clipboard"])
+
+    def test_linux_without_any_tool_has_no_command(self):
+        self.assertIsNone(tracklist.clipboard_command("linux", self.available()))
+
+
+class CopyToClipboardTest(unittest.TestCase):
+    def test_pipes_the_text_to_the_platform_command(self):
+        with mock.patch.object(tracklist, "clipboard_command", return_value=["clip"]), \
+                mock.patch.object(tracklist.subprocess, "run") as run:
+            self.assertTrue(tracklist.copy_to_clipboard("hola"))
+        run.assert_called_once_with(["clip"], input=b"hola", check=True)
+
+    def test_reports_failure_when_no_tool_is_installed(self):
+        with mock.patch.object(tracklist, "clipboard_command", return_value=None):
+            self.assertFalse(tracklist.copy_to_clipboard("hola"))
+
+    def test_reports_failure_when_the_tool_fails(self):
+        error = subprocess.CalledProcessError(1, "clip")
+        with mock.patch.object(tracklist, "clipboard_command", return_value=["clip"]), \
+                mock.patch.object(tracklist.subprocess, "run", side_effect=error):
+            self.assertFalse(tracklist.copy_to_clipboard("hola"))
+
+
 if __name__ == "__main__":
     unittest.main()

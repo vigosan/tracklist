@@ -1,5 +1,4 @@
 import asyncio
-import subprocess
 import time
 
 import recognize_ui
@@ -290,10 +289,9 @@ def run_app(video_id, duration, label):
                 self.video_id, self.label, self.title_line,
             )
             log = self.query_one("#log", RichLog)
-            try:
-                subprocess.run(["pbcopy"], input=text.encode(), check=True)
+            if tracklist.copy_to_clipboard(text):
                 log.write("[*] copiado al portapapeles")
-            except (OSError, subprocess.CalledProcessError):
+            else:
                 log.write("[!] no se pudo copiar al portapapeles")
 
         def action_pause(self):

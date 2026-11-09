@@ -9,6 +9,7 @@ import hashlib
 import json
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -600,6 +601,29 @@ def recognition_available():
             "(una vez: .venv/bin/pip install audioop-lts shazamio==0.4.0.1 textual)",
             file=sys.stderr,
         )
+        return False
+    return True
+
+
+def clipboard_command(platform=sys.platform, which=shutil.which):
+    if platform == "darwin":
+        return ["pbcopy"]
+    if platform == "win32":
+        return ["clip"]
+    if which("wl-copy"):
+        return ["wl-copy"]
+    if which("xclip"):
+        return ["xclip", "-selection", "clipboard"]
+    return None
+
+
+def copy_to_clipboard(text):
+    command = clipboard_command()
+    if command is None:
+        return False
+    try:
+        subprocess.run(command, input=text.encode(), check=True)
+    except (OSError, subprocess.CalledProcessError):
         return False
     return True
 
