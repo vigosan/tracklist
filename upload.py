@@ -142,8 +142,8 @@ def youtube_client():
         from googleapiclient.discovery import build
     except ImportError:
         sys.exit(
-            "Para subir audio ejecuta con el python del venv.\n"
-            "Dependencias (una vez): .venv/bin/python -m pip install google-api-python-client google-auth-oauthlib"
+            "Faltan dependencias para subir audio. Instalalas una vez con:\n"
+            "    python -m pip install google-api-python-client google-auth-oauthlib"
         )
     if not CLIENT_SECRET.exists():
         sys.exit(

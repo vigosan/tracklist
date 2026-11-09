@@ -482,9 +482,8 @@ def recognize_gaps_async(video_id, gaps, progress, resume=None):
         from shazamio.exceptions import FailedDecodeJson
     except ImportError:
         sys.exit(
-            "Para --recognize ejecuta con el python del venv:\n"
-            "    .venv/bin/python3 tracklist.py --recognize <video>\n"
-            "Dependencias (una vez): .venv/bin/pip install audioop-lts shazamio==0.4.0.1"
+            "Faltan dependencias para --recognize. Instalalas una vez con:\n"
+            "    python -m pip install audioop-lts shazamio==0.4.0.1"
         )
 
     async def run():
@@ -618,8 +617,8 @@ def recognition_available():
     except ImportError:
         print(
             "Aviso: reconocimiento de huecos desactivado (faltan dependencias).\n"
-            "Para activarlo: .venv/bin/python3 tracklist.py <video>\n"
-            "(una vez: .venv/bin/pip install audioop-lts shazamio==0.4.0.1 textual)",
+            "Para activarlo, instalalas una vez con:\n"
+            "    python -m pip install audioop-lts shazamio==0.4.0.1 textual",
             file=sys.stderr,
         )
         return False

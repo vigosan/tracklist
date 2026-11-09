@@ -95,7 +95,7 @@ def textual_available():
         import textual  # noqa: F401
     except ImportError:
         print(
-            "Aviso: TUI desactivado (falta textual: .venv/bin/pip install textual).",
+            "Aviso: TUI desactivado (falta textual: python -m pip install textual).",
             file=sys.stderr,
         )
         return False

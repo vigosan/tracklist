@@ -1407,6 +1407,39 @@ class BrowserCookiesTest(unittest.TestCase):
         self.assertIn("TRACKLIST_BROWSER", message)
 
 
+class MissingDependencyMessageTest(unittest.TestCase):
+    def assert_portable(self, text):
+        self.assertNotIn(".venv", text)
+        self.assertNotIn("brew", text)
+        self.assertIn("pip install", text)
+
+    def test_missing_shazam_tells_how_to_install_it_on_any_platform(self):
+        with mock.patch.dict("sys.modules", {"shazamio": None}), \
+                contextlib.redirect_stderr(io.StringIO()) as stderr:
+            self.assertFalse(tracklist.recognition_available())
+        self.assert_portable(stderr.getvalue())
+
+    def test_recognizing_without_shazam_exits_with_a_portable_hint(self):
+        with mock.patch.dict("sys.modules", {"shazamio": None}):
+            with self.assertRaises(SystemExit) as raised:
+                tracklist.recognize_gaps_async("vid12345678", [], lambda event: None)
+        self.assert_portable(str(raised.exception))
+
+    def test_missing_textual_tells_how_to_install_it_on_any_platform(self):
+        stderr = io.StringIO()
+        stderr.isatty = lambda: True
+        with mock.patch.dict("sys.modules", {"textual": None}), \
+                contextlib.redirect_stderr(stderr):
+            self.assertFalse(recognize_ui.textual_available())
+        self.assert_portable(stderr.getvalue())
+
+    def test_missing_google_libraries_tell_how_to_install_them_on_any_platform(self):
+        with mock.patch.dict("sys.modules", {"google.auth.exceptions": None}):
+            with self.assertRaises(SystemExit) as raised:
+                upload.youtube_client()
+        self.assert_portable(str(raised.exception))
+
+
 class ClipboardCommandTest(unittest.TestCase):
     def available(self, *names):
         return lambda name: f"/bin/{name}" if name in names else None
