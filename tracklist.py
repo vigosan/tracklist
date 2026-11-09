@@ -5,6 +5,7 @@ import bisect
 import hashlib
 import importlib.metadata
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -18,6 +19,17 @@ from http.cookiejar import MozillaCookieJar
 from pathlib import Path
 
 from messages import t
+
+
+def audio_cache_dir(platform=sys.platform, env=os.environ, home=None):
+    home = home or Path.home()
+    if platform == "darwin":
+        return home / "Library" / "Caches" / "tracklist"
+    if platform == "win32":
+        root = Path(env.get("LOCALAPPDATA") or home / "AppData" / "Local")
+        return root / "tracklist" / "Cache"
+    return Path(env.get("XDG_CACHE_HOME") or home / ".cache") / "tracklist"
+
 
 BASE = "https://studio.youtube.com/youtubei/v1/creator"
 ORIGIN = "https://studio.youtube.com"
@@ -43,7 +55,7 @@ BROWSERS = {
 APP_DIRS = [Path("/Applications"), Path.home() / "Applications"]
 browser_flag = None
 CACHE_DIR = Path.home() / ".config" / "tracklist" / "cache"
-AUDIO_DIR = Path.home() / "Library" / "Caches" / "tracklist"
+AUDIO_DIR = audio_cache_dir()
 MIN_GAP_SECONDS = 90
 SAMPLE_SECONDS = 10
 SAMPLE_INTERVAL = 90
