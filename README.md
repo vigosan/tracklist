@@ -1,5 +1,7 @@
 # tracklist
 
+**English** · [Español](README.es.md)
+
 Builds a timestamped tracklist for a YouTube video (a DJ set, a mix, a radio show) from YouTube's Content ID claims, and fills the gaps with Shazam.
 
 ```
@@ -116,6 +118,8 @@ LC_ALL=es_ES.UTF-8 tracklist <URL>
 ```
 
 In Spanish, yes/no questions and the TUI's confirm key use `s` instead of `y`.
+
+This README is also available in Spanish: [README.es.md](README.es.md).
 
 ## Limits
 
