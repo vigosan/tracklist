@@ -412,12 +412,58 @@ class VerboseLogTest(unittest.TestCase):
         self.assertIsNone(recognize_ui.pentest_line(("cualquier-cosa",)))
 
 
+class ClipboardCommandTest(unittest.TestCase):
+    def available(self, *names):
+        return lambda name: f"/bin/{name}" if name in names else None
+
+    def test_macos_copies_with_pbcopy(self):
+        self.assertEqual(tracklist.clipboard_command("darwin", self.available()), ["pbcopy"])
+
+    def test_windows_copies_with_clip_so_the_tracklist_reaches_the_clipboard_off_macos(self):
+        self.assertEqual(tracklist.clipboard_command("win32", self.available()), ["clip"])
+
+    def test_linux_prefers_wayland_when_both_tools_exist(self):
+        command = tracklist.clipboard_command("linux", self.available("wl-copy", "xclip"))
+        self.assertEqual(command, ["wl-copy"])
+
+    def test_linux_falls_back_to_xclip_selecting_the_clipboard(self):
+        command = tracklist.clipboard_command("linux", self.available("xclip"))
+        self.assertEqual(command, ["xclip", "-selection", "clipboard"])
+
+    def test_linux_without_any_tool_has_no_command(self):
+        self.assertIsNone(tracklist.clipboard_command("linux", self.available()))
+
+
+class CopyToClipboardTest(unittest.TestCase):
+    def test_pipes_the_text_to_the_platform_command(self):
+        with mock.patch.object(tracklist, "clipboard_command", return_value=["pbcopy"]), \
+                mock.patch.object(tracklist.subprocess, "run") as run:
+            self.assertTrue(tracklist.copy_to_clipboard("Señal"))
+        run.assert_called_once_with(["pbcopy"], input="Señal".encode("utf-8"), check=True)
+
+    def test_clip_gets_utf16_with_a_byte_order_mark_so_accents_survive_its_codepage(self):
+        with mock.patch.object(tracklist, "clipboard_command", return_value=["clip"]), \
+                mock.patch.object(tracklist.subprocess, "run") as run:
+            tracklist.copy_to_clipboard("Señal")
+        self.assertEqual(run.call_args.kwargs["input"], "Señal".encode("utf-16"))
+
+    def test_reports_failure_when_no_tool_is_installed(self):
+        with mock.patch.object(tracklist, "clipboard_command", return_value=None):
+            self.assertFalse(tracklist.copy_to_clipboard("hola"))
+
+    def test_reports_failure_when_the_tool_fails(self):
+        error = subprocess.CalledProcessError(1, "clip")
+        with mock.patch.object(tracklist, "clipboard_command", return_value=["clip"]), \
+                mock.patch.object(tracklist.subprocess, "run", side_effect=error):
+            self.assertFalse(tracklist.copy_to_clipboard("hola"))
+
+
 class OfferClipboardTest(unittest.TestCase):
     def answer(self, reply):
         with mock.patch.object(recognize_ui.sys, "stdin") as stdin, \
                 mock.patch.object(recognize_ui.sys, "stderr", io.StringIO()) as stderr, \
                 mock.patch("builtins.input", return_value=reply), \
-                mock.patch.object(recognize_ui.subprocess, "run") as run:
+                mock.patch.object(tracklist.subprocess, "run") as run:
             stdin.isatty.return_value = True
             stderr.isatty = lambda: True
             recognize_ui.offer_clipboard("tracklist")
@@ -2934,7 +2980,7 @@ class TuiStepsTest(IsolatedCache, unittest.TestCase):
             asyncio.run(scenario())
 
         with mock.patch.object(upload, "run_steps", fake_steps), \
-                mock.patch.object(recognize_tui.subprocess, "run", lambda command, **kwargs: self.clipboard.append(kwargs["input"].decode())), \
+                mock.patch.object(tracklist.subprocess, "run", lambda command, **kwargs: self.clipboard.append(kwargs["input"].decode())), \
                 mock.patch.object(upload, "needs_wait", lambda video_id: self.needs_wait_args.append(video_id) or waiting_after), \
                 mock.patch.object(upload, "youtube_client", lambda: "client"), \
                 mock.patch.object(upload, "processing_details", details), \
@@ -3644,7 +3690,7 @@ class TuiCopyLinkTest(unittest.TestCase):
         with mock.patch.object(tracklist, "try_claims", lambda video_id, own: ({}, TuiWaitTest.CLAIMS[:1], None)), \
                 mock.patch.object(tracklist, "recognize_gaps_async", no_recognition), \
                 mock.patch.object(tracklist, "fetch_videos", lambda ids, session: {}), \
-                mock.patch.object(recognize_tui.subprocess, "run", lambda command, **kwargs: clipboard.append(kwargs["input"].decode())), \
+                mock.patch.object(tracklist.subprocess, "run", lambda command, **kwargs: clipboard.append(kwargs["input"].decode())), \
                 mock.patch.object(App, "run", drive):
             recognize_tui.run_app(self.COPY, 600, False, True, shown_id=shown_id)
         return clipboard[0]

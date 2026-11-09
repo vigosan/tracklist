@@ -1,4 +1,3 @@
-import subprocess
 import sys
 
 import tracklist
@@ -114,8 +113,7 @@ def offer_clipboard(text):
         return
     if answer not in ("", t("yes")):
         return
-    try:
-        subprocess.run(["pbcopy"], input=text.encode(), check=True)
+    if tracklist.copy_to_clipboard(text):
         print(t("copied"), file=sys.stderr)
-    except (OSError, subprocess.CalledProcessError):
+    else:
         print(t("copy_failed"), file=sys.stderr)

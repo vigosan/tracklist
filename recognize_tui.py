@@ -1,6 +1,5 @@
 import asyncio
 import re
-import subprocess
 import threading
 import time
 from dataclasses import dataclass
@@ -448,10 +447,9 @@ def run_app(video_id, duration, label, own=False, waiting=False, job=None, shown
                 self.shown_id, self.label, self.title_line,
             )
             log = self.query_one("#log", RichLog)
-            try:
-                subprocess.run(["pbcopy"], input=text.encode(), check=True)
+            if tracklist.copy_to_clipboard(text):
                 log.write(t("log_copied"))
-            except (OSError, subprocess.CalledProcessError):
+            else:
                 log.write(t("log_copy_failed"))
 
         def action_pause(self):

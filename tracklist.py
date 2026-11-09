@@ -647,6 +647,30 @@ def recognition_available():
     return True
 
 
+def clipboard_command(platform=sys.platform, which=shutil.which):
+    if platform == "darwin":
+        return ["pbcopy"]
+    if platform == "win32":
+        return ["clip"]
+    if which("wl-copy"):
+        return ["wl-copy"]
+    if which("xclip"):
+        return ["xclip", "-selection", "clipboard"]
+    return None
+
+
+def copy_to_clipboard(text):
+    command = clipboard_command()
+    if command is None:
+        return False
+    payload = text.encode("utf-16") if command == ["clip"] else text.encode("utf-8")
+    try:
+        subprocess.run(command, input=payload, check=True)
+    except (OSError, subprocess.CalledProcessError):
+        return False
+    return True
+
+
 def parse_video_id(text):
     match = re.search(r"(?:v=|youtu\.be/|video/)([\w-]{11})", text)
     return match.group(1) if match else text
