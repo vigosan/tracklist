@@ -7,6 +7,7 @@ import asyncio
 import bisect
 import hashlib
 import json
+import os
 import re
 import shlex
 import shutil
@@ -19,13 +20,24 @@ import urllib.request
 from http.cookiejar import MozillaCookieJar
 from pathlib import Path
 
+
+def audio_cache_dir(platform=sys.platform, env=os.environ, home=None):
+    home = home or Path.home()
+    if platform == "darwin":
+        return home / "Library" / "Caches" / "tracklist"
+    if platform == "win32":
+        root = Path(env.get("LOCALAPPDATA") or home / "AppData" / "Local")
+        return root / "tracklist" / "Cache"
+    return Path(env.get("XDG_CACHE_HOME") or home / ".cache") / "tracklist"
+
+
 BASE = "https://studio.youtube.com/youtubei/v1/creator"
 ORIGIN = "https://studio.youtube.com"
 CLAIMS_ENDPOINT = f"{BASE}/list_creator_received_claims?alt=json"
 VIDEOS_ENDPOINT = f"{BASE}/get_creator_videos?alt=json"
 SESSION_FILE = Path.home() / ".config" / "tracklist" / "session.json"
 CACHE_DIR = Path.home() / ".config" / "tracklist" / "cache"
-AUDIO_DIR = Path.home() / "Library" / "Caches" / "tracklist"
+AUDIO_DIR = audio_cache_dir()
 MIN_GAP_SECONDS = 90
 SAMPLE_SECONDS = 10
 SAMPLE_INTERVAL = 90

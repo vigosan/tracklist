@@ -1334,6 +1334,30 @@ class FoldSuggestionsIntoClaimsTest(unittest.TestCase):
         self.assertEqual(tracklist.drop_claimed(claimed, [suggestion]), [suggestion])
 
 
+class AudioCacheDirTest(unittest.TestCase):
+    home = Path("/home/ana")
+
+    def test_macos_keeps_the_library_caches_folder(self):
+        path = tracklist.audio_cache_dir("darwin", {}, self.home)
+        self.assertEqual(path, self.home / "Library" / "Caches" / "tracklist")
+
+    def test_windows_uses_localappdata_so_big_audio_stays_out_of_roaming_profiles(self):
+        path = tracklist.audio_cache_dir("win32", {"LOCALAPPDATA": "C:/Users/ana/AppData/Local"}, self.home)
+        self.assertEqual(path, Path("C:/Users/ana/AppData/Local") / "tracklist" / "Cache")
+
+    def test_windows_without_localappdata_falls_back_to_the_default_location(self):
+        path = tracklist.audio_cache_dir("win32", {}, self.home)
+        self.assertEqual(path, self.home / "AppData" / "Local" / "tracklist" / "Cache")
+
+    def test_linux_honours_xdg_cache_home(self):
+        path = tracklist.audio_cache_dir("linux", {"XDG_CACHE_HOME": "/data/cache"}, self.home)
+        self.assertEqual(path, Path("/data/cache") / "tracklist")
+
+    def test_linux_defaults_to_dot_cache(self):
+        path = tracklist.audio_cache_dir("linux", {}, self.home)
+        self.assertEqual(path, self.home / ".cache" / "tracklist")
+
+
 class ClipboardCommandTest(unittest.TestCase):
     def available(self, *names):
         return lambda name: f"/bin/{name}" if name in names else None
