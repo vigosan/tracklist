@@ -149,6 +149,26 @@ class StudioSessionTest(unittest.TestCase):
         self.addCleanup(setattr, urllib.request, "urlopen", original)
 
 
+class Utf8SubprocessTextTest(unittest.TestCase):
+    def test_cookie_errors_are_decoded_as_utf8_so_windows_codepages_cannot_crash_them(self):
+        refused = subprocess.CompletedProcess([], 1, "", "")
+        with mock.patch.object(tracklist.subprocess, "run", return_value=refused) as run, \
+                self.assertRaises(SystemExit):
+            tracklist.browser_cookies("firefox")
+        self.assertEqual(run.call_args.kwargs["encoding"], "utf-8")
+        self.assertEqual(run.call_args.kwargs["errors"], "replace")
+
+    def test_tracked_commands_are_decoded_as_utf8_so_a_title_outside_the_codepage_cannot_crash_them(self):
+        process = mock.MagicMock()
+        process.stdout = io.StringIO("")
+        process.returncode = 0
+        process.poll.return_value = 0
+        with mock.patch.object(upload.subprocess, "Popen", return_value=process) as popen:
+            upload.run_tracked(["yt-dlp"], lambda line: None, None, None)
+        self.assertEqual(popen.call_args.kwargs["encoding"], "utf-8")
+        self.assertEqual(popen.call_args.kwargs["errors"], "replace")
+
+
 class SafariAccessTest(unittest.TestCase):
     def test_safari_without_disk_access_says_where_to_grant_it(self):
         refused = subprocess.CompletedProcess([], 1, "", "Operation not permitted")

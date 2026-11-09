@@ -97,8 +97,11 @@ def terminate_when_stopped(process, stop):
 def run_tracked(command, parse, progress, stop):
     if stop and stop.is_set():
         raise Cancelled()
-    with tempfile.TemporaryFile(mode="w+") as errors:
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=errors, text=True)
+    with tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as errors:
+        process = subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=errors,
+            text=True, encoding="utf-8", errors="replace",
+        )
         if stop:
             threading.Thread(target=terminate_when_stopped, args=(process, stop), daemon=True).start()
         try:
