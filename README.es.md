@@ -33,7 +33,7 @@ El progreso se guarda en caché, así que un análisis interrumpido continúa do
 
 ## Instalación
 
-Requiere macOS. Abre la Terminal, pega esta línea y pulsa Enter. Instala Homebrew si no lo tienes y después todo lo que tracklist necesita:
+**macOS.** Abre la Terminal, pega esta línea y pulsa Enter. Instala Homebrew si no lo tienes y después todo lo que tracklist necesita:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/vigosan/tracklist/main/install.sh | bash
@@ -48,13 +48,78 @@ uv tool install git+https://github.com/vigosan/tracklist
 
 Para actualizar, ejecuta `tracklist update`. Una vez al día, al abrir tracklist, comprueba en GitHub si hay una versión nueva y muestra un aviso de una línea si la hay (nunca se actualiza solo; sin conexión, se salta la comprobación).
 
+**Windows y Linux** están soportados pero sin probar: mira [Windows y Linux (experimental)](#windows-y-linux-experimental).
+
+## Windows y Linux (experimental)
+
+tracklist se escribió y se probó solo en macOS. El soporte de Windows y Linux existe en el código pero **nunca se ha ejecutado en esos sistemas**. Si lo pruebas, sigue la lista de abajo y cuenta qué pasa: así es como se arregla.
+
+### Instalar en Windows
+
+1. Instala las herramientas. En PowerShell:
+
+   ```powershell
+   winget install astral-sh.uv yt-dlp.yt-dlp Gyan.FFmpeg
+   ```
+
+2. Cierra la terminal y abre una nueva, para que encuentre las herramientas nuevas. Después instala tracklist:
+
+   ```powershell
+   uv tool install git+https://github.com/vigosan/tracklist
+   uv tool update-shell
+   ```
+
+   Cierra y vuelve a abrir la terminal una vez más. uv descarga Python 3.13 por su cuenta si no lo tienes.
+3. Ejecuta `tracklist <URL>`. Usa Windows Terminal y no la ventana antigua de `cmd.exe`: la interfaz de terminal necesita una terminal moderna.
+
+### Instalar en Linux
+
+Instala `yt-dlp`, `ffmpeg` y `uv` con tu gestor de paquetes o con sus propios instaladores, y después instala tracklist:
+
+```bash
+sudo apt install ffmpeg wl-clipboard      # o: dnf / pacman; usa xclip en lugar de wl-clipboard en X11
+pipx install yt-dlp                       # los paquetes de yt-dlp de la distro suelen ser demasiado viejos para YouTube
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv tool install git+https://github.com/vigosan/tracklist
+```
+
+### Qué cambia respecto a macOS
+
+- **Navegador:** tracklist busca la carpeta de perfil de cada navegador en lugar de una app. Safari solo existe en macOS.
+  - En Windows, yt-dlp puede fallar al descifrar las cookies de Chrome, Edge y Brave recientes. Si ves "No se pudieron leer las cookies", usa Firefox: `tracklist <URL> --browser firefox`.
+  - En Linux, los navegadores basados en Chromium guardan su clave en el llavero del escritorio (GNOME o KDE), que puede pedirte la contraseña.
+- **Portapapeles:** Windows usa `clip`; Linux necesita `wl-copy` (`wl-clipboard`) o `xclip`. Sin ninguno, tracklist muestra "no se pudo copiar al portapapeles" y lo demás sigue funcionando.
+- **Notificación cuando el tracklist está listo:** solo en macOS. En otros sistemas se omite.
+- **Script de instalación:** `install.sh` es para macOS. Usa los pasos de arriba.
+- **Dónde se guardan los datos:** mira [Datos guardados](#datos-guardados).
+
+### Ayúdanos a probar
+
+Recorre esta lista en tu sistema y anota qué funciona. Cada paso dice qué deberías ver.
+
+1. `tracklist --help` muestra las opciones. Si no, la instalación ha fallado.
+2. `tracklist <URL de un video de tu canal>` encuentra tu navegador y su sesión de YouTube y, solo la primera vez, te guía con la credencial de Google.
+3. El asistente de la credencial abre cada página de Google y recoge el `client_secret*.json` que descargues en `~/Downloads`. Si tu carpeta de descargas tiene otro nombre (por ejemplo `~/Descargas` en un Linux en español), pega la ruta del JSON cuando te la pida.
+4. `tracklist <URL del video de otra persona>` lo descarga, sube la copia privada y lee sus reclamaciones.
+5. `tracklist "C:\Users\tu\Music\Sesión de prueba.mp3"` (o una ruta de Linux) con espacios y acentos en el nombre del fichero.
+6. En la interfaz de terminal las teclas funcionan y la pantalla se dibuja bien. Pulsa `c`, pega en algún sitio y comprueba que los acentos (é, ñ) y los símbolos llegan intactos.
+7. Pulsa `q` durante la descarga y ejecuta el mismo comando otra vez: continúa en lugar de empezar de cero.
+8. Un video con emoji o letras no latinas en el título no hace que tracklist se caiga.
+
+Para informar de un problema, abre un issue en GitHub o escribe al mantenedor con:
+
+- tu sistema y su versión (Windows 11, Ubuntu 24.04...) y la terminal que usaste
+- la salida de `uv tool list` y `yt-dlp --version`
+- con qué navegador tenías la sesión iniciada
+- qué paso de la lista falló, y las últimas líneas que mostró tracklist (o una captura)
+
 ## Qué navegador
 
 tracklist lee la sesión de YouTube de un navegador en el que hayas iniciado sesión, así que necesita saber cuál.
 
 - **Automático:** detecta el navegador que tiene la sesión y lo recuerda. Si ese navegador pierde la sesión más adelante, cambia a otro con sesión iniciada.
 - **A tu elección:** pasa `--browser` con uno de chrome, brave, edge, firefox, safari, vivaldi, opera o chromium, por ejemplo `tracklist <URL> --browser safari`. tracklist lo recuerda para las siguientes ejecuciones y, en la ejecución en que lo pasas, usa solo ese navegador.
-- **Safari** necesita "Acceso total al disco" para tu app de terminal (Terminal, iTerm, Ghostty...) en Ajustes del Sistema > Privacidad y seguridad.
+- **Safari** es solo de macOS, y necesita "Acceso total al disco" para tu app de terminal (Terminal, iTerm, Ghostty...) en Ajustes del Sistema > Privacidad y seguridad.
 
 ## Primera ejecución
 
@@ -65,7 +130,7 @@ Antes de empezar, asegúrate de tener:
 
 Después ejecuta `tracklist <URL>` como de costumbre. La primera vez, tracklist hace una configuración única que lleva unos 5 minutos y no se vuelve a pedir:
 
-1. **Permitir el acceso a las cookies del navegador.** macOS te pide la contraseña del llavero para que tracklist pueda leer la sesión de YouTube del navegador. Elige "Permitir siempre" para que no la pida en cada ejecución.
+1. **Permitir el acceso a las cookies del navegador.** En macOS, un aviso te pide la contraseña del llavero para que tracklist pueda leer la sesión de YouTube del navegador. Elige "Permitir siempre" para que no la pida en cada ejecución. Windows no pregunta; Linux puede pedir la contraseña del llavero.
 2. **Crear tu propia credencial de Google.** tracklist sube a tu canal a través de tu propio proyecto de Google, que es gratuito. Un asistente te abre cada página de Google Cloud y te dice qué hacer:
    1. Crea un proyecto: escribe `tracklist` como nombre del proyecto y haz clic en Crear.
    2. Activa la YouTube Data API v3: haz clic en Habilitar.
@@ -102,7 +167,7 @@ tracklist <URL> --label                                  # muestra el sello de c
 
 Otras opciones: `--no-recognize` (omite Shazam), `--from-json FILE` (usa una respuesta de reclamaciones guardada), `--duration SECONDS` (duración total, para el hueco final).
 
-Content ID puede tardar en reportar las reclamaciones de una subida nueva. Puedes salir durante esa espera y ejecutar el mismo comando más tarde: continúa desde la subida existente y nunca espera dos veces salvo que pases `--fresh`. La interfaz de terminal muestra las reclamaciones según llegan, y una notificación de macOS te avisa cuando el tracklist está listo. También muestra el progreso de la descarga, la conversión y la subida, y después la espera de Content ID. Salir durante la descarga o la conversión las detiene limpiamente, y salir durante la subida pregunta antes, porque la siguiente ejecución la sube otra vez y gasta cuota.
+Content ID puede tardar en reportar las reclamaciones de una subida nueva. Puedes salir durante esa espera y ejecutar el mismo comando más tarde: continúa desde la subida existente y nunca espera dos veces salvo que pases `--fresh`. La interfaz de terminal muestra las reclamaciones según llegan, y en macOS una notificación te avisa cuando el tracklist está listo. También muestra el progreso de la descarga, la conversión y la subida, y después la espera de Content ID. Salir durante la descarga o la conversión las detiene limpiamente, y salir durante la subida pregunta antes, porque la siguiente ejecución la sube otra vez y gasta cuota.
 
 Mientras se ejecuta, una interfaz de terminal muestra el tracklist a medida que crece:
 
@@ -135,5 +200,8 @@ Este README también está disponible en inglés: [README.md](README.md).
 
 ## Datos guardados
 
-- `~/.config/tracklist`: navegador elegido, credencial y sesión de Google, caché de análisis.
-- `~/Library/Caches/tracklist`: audio descargado, para poder continuar un análisis.
+- `~/.config/tracklist`: navegador elegido, credencial y sesión de Google, caché de análisis. En Windows es `C:\Users\<tu usuario>\.config\tracklist`.
+- Audio descargado, para poder continuar un análisis:
+  - macOS: `~/Library/Caches/tracklist`
+  - Windows: `%LOCALAPPDATA%\tracklist\Cache`
+  - Linux: `~/.cache/tracklist` (o `$XDG_CACHE_HOME/tracklist`)
