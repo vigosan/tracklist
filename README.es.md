@@ -99,7 +99,7 @@ Recorre esta lista en tu sistema y anota qué funciona. Cada paso dice qué debe
 
 1. `tracklist --help` muestra las opciones. Si no, la instalación ha fallado.
 2. `tracklist <URL de un video de tu canal>` encuentra tu navegador y su sesión de YouTube y, solo la primera vez, te guía con la credencial de Google.
-3. El asistente de la credencial abre cada página de Google y recoge el `client_secret*.json` que descargues en `~/Downloads`. Si tu carpeta de descargas tiene otro nombre (por ejemplo `~/Descargas` en un Linux en español), pega la ruta del JSON cuando te la pida.
+3. El asistente de la credencial abre cada página de Google y recoge el `client_secret*.json` que descargues en la carpeta de descargas de tu sistema (aunque tenga otro nombre, como `~/Descargas` en un Linux en español, o la hayas movido en Windows).
 4. `tracklist <URL del video de otra persona>` lo descarga, sube la copia privada y lee sus reclamaciones.
 5. `tracklist "C:\Users\tu\Music\Sesión de prueba.mp3"` (o una ruta de Linux) con espacios y acentos en el nombre del fichero.
 6. En la interfaz de terminal las teclas funcionan y la pantalla se dibuja bien. Pulsa `c`, pega en algún sitio y comprueba que los acentos (é, ñ) y los símbolos llegan intactos.
@@ -138,7 +138,7 @@ Después ejecuta `tracklist <URL>` como de costumbre. La primera vez, tracklist 
    4. Haz clic en "Publicar app" para que el inicio de sesión no caduque cada 7 días. Google muestra un aviso de app sin verificar: es tu propia app, así que continúa.
    5. Crea un cliente OAuth: elige "Aplicación de escritorio" como tipo, escribe `tracklist` como nombre, haz clic en Crear y descarga el JSON.
 
-   De vuelta en la terminal, pulsa Enter y tracklist recoge el nuevo `client_secret*.json` de `~/Downloads`, o pega la ruta del JSON.
+   De vuelta en la terminal, pulsa Enter y tracklist recoge el nuevo `client_secret*.json` de tu carpeta de descargas, o pega la ruta del JSON.
 3. **Autorizar tracklist.** Se abre tu navegador para que inicies sesión con Google y apruebes el acceso. El permiso que pide Google (`youtube`) da a tracklist control sobre tu canal; solo sube copias privadas y borra las copias que él mismo subió.
 
 Después de eso, tracklist empieza a analizar el video.

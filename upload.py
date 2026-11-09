@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -323,6 +324,42 @@ def valid_client_secret(path):
         return False
 
 
+def registered_windows_downloads():
+    try:
+        import winreg
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders",
+        ) as key:
+            return winreg.QueryValueEx(key, "{374DE290-123F-4565-9164-39C4925E467B}")[0]
+    except (ImportError, OSError):
+        return None
+
+
+def user_downloads_dir(platform=None, env=None, home=None, windows_downloads=registered_windows_downloads):
+    platform = platform or sys.platform
+    env = os.environ if env is None else env
+    home = home or Path.home()
+    fallback = home / "Downloads"
+    if platform == "win32":
+        registered = windows_downloads()
+        if not registered:
+            return fallback
+        return Path(os.path.expandvars(registered.replace("%USERPROFILE%", str(home))))
+    if platform == "darwin":
+        return fallback
+    user_dirs = Path(env.get("XDG_CONFIG_HOME") or home / ".config") / "user-dirs.dirs"
+    try:
+        lines = user_dirs.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return fallback
+    for line in lines:
+        name, _, value = line.partition("=")
+        if name.strip() == "XDG_DOWNLOAD_DIR":
+            return Path(value.strip().strip('"').replace("$HOME", str(home)))
+    return fallback
+
+
 def find_client_secret(directory, since):
     candidates = [path for path in Path(directory).glob("client_secret*.json")
                   if path.stat().st_mtime >= since]
@@ -330,7 +367,8 @@ def find_client_secret(directory, since):
 
 
 def setup_credentials(open_url=webbrowser.open, ask=input, report=print_stderr,
-                      downloads=Path.home() / "Downloads", clock=time.time):
+                      downloads=None, clock=time.time):
+    downloads = downloads or user_downloads_dir()
     started = clock()
     report(t("wizard_intro", total=len(CONSOLE_STEPS)))
     ask(t("press_enter"))
@@ -345,7 +383,7 @@ def setup_credentials(open_url=webbrowser.open, ask=input, report=print_stderr,
         else:
             found = find_client_secret(downloads, started)
             if found is None:
-                report(t("no_new_client_secret"))
+                report(t("no_new_client_secret", folder=downloads))
                 continue
         if found.exists() and valid_client_secret(found):
             break

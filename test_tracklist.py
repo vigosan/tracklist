@@ -485,6 +485,56 @@ class InstallHintTest(unittest.TestCase):
         self.assertIn("winget install yt-dlp.yt-dlp", str(stop.exception.code))
 
 
+class UserDownloadsDirTest(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.home = Path(tmp.name)
+
+    def write_user_dirs(self, text, config=None):
+        folder = config or self.home / ".config"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "user-dirs.dirs").write_text(text, encoding="utf-8")
+
+    def test_macos_uses_downloads_in_the_home_folder(self):
+        self.assertEqual(upload.user_downloads_dir("darwin", {}, self.home), self.home / "Downloads")
+
+    def test_linux_follows_the_folder_the_desktop_calls_downloads_so_a_spanish_system_finds_descargas(self):
+        self.write_user_dirs('XDG_DESKTOP_DIR="$HOME/Escritorio"\nXDG_DOWNLOAD_DIR="$HOME/Descargas"\n')
+        self.assertEqual(upload.user_downloads_dir("linux", {}, self.home), self.home / "Descargas")
+
+    def test_linux_reads_user_dirs_from_xdg_config_home(self):
+        config = self.home / "cfg"
+        self.write_user_dirs('XDG_DOWNLOAD_DIR="$HOME/Telechargements"\n', config)
+        env = {"XDG_CONFIG_HOME": str(config)}
+        self.assertEqual(upload.user_downloads_dir("linux", env, self.home), self.home / "Telechargements")
+
+    def test_linux_accepts_an_absolute_downloads_folder(self):
+        self.write_user_dirs('XDG_DOWNLOAD_DIR="/data/descargas"\n')
+        self.assertEqual(upload.user_downloads_dir("linux", {}, self.home), Path("/data/descargas"))
+
+    def test_linux_without_user_dirs_falls_back_to_downloads(self):
+        self.assertEqual(upload.user_downloads_dir("linux", {}, self.home), self.home / "Downloads")
+
+    def test_linux_user_dirs_without_a_downloads_line_fall_back_to_downloads(self):
+        self.write_user_dirs('XDG_DESKTOP_DIR="$HOME/Escritorio"\n')
+        self.assertEqual(upload.user_downloads_dir("linux", {}, self.home), self.home / "Downloads")
+
+    def test_windows_follows_the_folder_registered_for_downloads_in_case_the_user_moved_it(self):
+        found = upload.user_downloads_dir("win32", {}, self.home, windows_downloads=lambda: "D:\\Descargas")
+        self.assertEqual(found, Path("D:\\Descargas"))
+
+    def test_windows_expands_the_user_profile_in_the_registered_folder(self):
+        found = upload.user_downloads_dir(
+            "win32", {}, self.home, windows_downloads=lambda: "%USERPROFILE%\\Downloads"
+        )
+        self.assertEqual(found, Path(f"{self.home}\\Downloads"))
+
+    def test_windows_without_a_registered_folder_falls_back_to_downloads(self):
+        found = upload.user_downloads_dir("win32", {}, self.home, windows_downloads=lambda: None)
+        self.assertEqual(found, self.home / "Downloads")
+
+
 class ClipboardCommandTest(unittest.TestCase):
     def available(self, *names):
         return lambda name: f"/bin/{name}" if name in names else None
@@ -3648,14 +3698,14 @@ class SetupCredentialsTest(unittest.TestCase):
     def test_enter_with_nothing_new_in_downloads_asks_for_the_file_instead_of_blaming_one(self):
         fresh = self.write_secret(self.root / "fresh.json")
         self.run_wizard([""] * 7 + [str(fresh)])
-        self.assertIn("No new client_secret*.json found in ~/Downloads: download it or paste the JSON's path.", self.reported)
+        self.assertIn(f"No new client_secret*.json found in {self.downloads}: download it or paste the JSON's path.", self.reported)
         self.assertFalse(any(m.startswith("That file") for m in self.reported))
 
     def test_a_spanish_system_asks_for_the_missing_file_in_spanish(self):
         fresh = self.write_secret(self.root / "fresh.json")
         with mock.patch.object(messages, "LANGUAGE", "es"):
             self.run_wizard([""] * 7 + [str(fresh)])
-        self.assertIn("No encuentro un client_secret*.json nuevo en ~/Downloads: descargalo o pega la ruta del JSON.", self.reported)
+        self.assertIn(f"No encuentro un client_secret*.json nuevo en {self.downloads}: descargalo o pega la ruta del JSON.", self.reported)
 
     def test_a_json_that_is_not_a_desktop_client_is_rejected(self):
         web = self.write_secret(self.root / "web.json", {"web": {"client_id": "x"}})

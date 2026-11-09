@@ -99,7 +99,7 @@ Go through this list on your system and note what works. Each step says what you
 
 1. `tracklist --help` prints the options. If not, the installation failed.
 2. `tracklist <URL of a video on your channel>` finds your browser and its YouTube session, then (the first time only) walks you through the Google credential.
-3. The credential wizard opens each Google page, and picks up the `client_secret*.json` you download into `~/Downloads`. If your downloads folder has another name (for example `~/Descargas` on a Spanish Linux), paste the JSON's path when asked.
+3. The credential wizard opens each Google page, and picks up the `client_secret*.json` you download into your system's downloads folder (even if it has another name, like `~/Descargas` on a Spanish Linux, or has been moved on Windows).
 4. `tracklist <URL of someone else's video>` downloads it, uploads the private copy and reads its claims.
 5. `tracklist "C:\Users\you\Music\Sesión de prueba.mp3"` (or a Linux path) with spaces and accents in the file name.
 6. In the terminal UI the keys work and the screen draws correctly. Press `c`, paste somewhere and check that accents (é, ñ) and symbols arrive intact.
@@ -138,7 +138,7 @@ Then run `tracklist <URL>` as usual. The first time, tracklist does a one-time s
    4. Click "Publish app" so the login doesn't expire every 7 days. Google shows an unverified app warning: it's your own app, so continue.
    5. Create an OAuth client: choose "Desktop app" as the type, type `tracklist` as the name, click Create and download the JSON.
 
-   Back in the terminal, press Enter and tracklist picks up the new `client_secret*.json` from `~/Downloads`, or paste the JSON's path.
+   Back in the terminal, press Enter and tracklist picks up the new `client_secret*.json` from your downloads folder, or paste the JSON's path.
 3. **Authorise tracklist.** Your browser opens so you can sign in with Google and approve access. The permission Google asks for (`youtube`) gives tracklist control of your channel; it only uploads private copies and deletes the copies it uploaded.
 
 After that, tracklist starts analysing the video.
