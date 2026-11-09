@@ -1071,6 +1071,65 @@ class ProbeDurationTest(unittest.TestCase):
         self.assertEqual(command[index:index + 2], ["--cookies-from-browser", "firefox"])
 
 
+class BrowsersWithProfileTest(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+
+    def make(self, *relative):
+        for path in relative:
+            (self.root / path).mkdir(parents=True)
+
+    def test_windows_finds_chromium_browsers_under_local_app_data_and_firefox_under_roaming(self):
+        self.make(
+            "Local/Google/Chrome/User Data",
+            "Local/Microsoft/Edge/User Data",
+            "Roaming/Mozilla/Firefox/Profiles",
+        )
+        env = {"LOCALAPPDATA": str(self.root / "Local"), "APPDATA": str(self.root / "Roaming")}
+        found = tracklist.browsers_with_profile("win32", env, self.root / "home")
+        self.assertEqual(found, ["chrome", "edge", "firefox"])
+
+    def test_windows_without_the_environment_falls_back_to_the_default_profile_locations(self):
+        self.make("AppData/Local/BraveSoftware/Brave-Browser/User Data")
+        found = tracklist.browsers_with_profile("win32", {}, self.root)
+        self.assertEqual(found, ["brave"])
+
+    def test_linux_finds_browsers_under_dot_config_and_dot_mozilla(self):
+        self.make(".config/google-chrome", ".config/BraveSoftware/Brave-Browser", ".mozilla/firefox")
+        found = tracklist.browsers_with_profile("linux", {}, self.root)
+        self.assertEqual(found, ["chrome", "brave", "firefox"])
+
+    def test_linux_honours_xdg_config_home(self):
+        self.make("cfg/chromium")
+        found = tracklist.browsers_with_profile("linux", {"XDG_CONFIG_HOME": str(self.root / "cfg")}, self.root)
+        self.assertEqual(found, ["chromium"])
+
+    def test_linux_finds_the_snap_builds_of_firefox_and_chromium(self):
+        self.make("snap/firefox/common/.mozilla/firefox", "snap/chromium/common/chromium")
+        found = tracklist.browsers_with_profile("linux", {}, self.root)
+        self.assertEqual(found, ["firefox", "chromium"])
+
+    def test_an_empty_machine_has_no_browsers(self):
+        self.assertEqual(tracklist.browsers_with_profile("linux", {}, self.root), [])
+
+    def test_safari_is_never_offered_off_macos(self):
+        self.make("Library/Safari", ".config/safari")
+        self.assertNotIn("safari", tracklist.browsers_with_profile("linux", {}, self.root))
+
+    def test_off_macos_detection_looks_at_profile_folders_instead_of_app_bundles(self):
+        with mock.patch.object(tracklist.sys, "platform", "win32"), \
+                mock.patch.object(tracklist, "browsers_with_profile", return_value=["firefox"]):
+            self.assertEqual(tracklist.detect_browsers(), ["firefox"])
+
+    def test_on_macos_detection_looks_at_app_bundles(self):
+        with mock.patch.object(tracklist.sys, "platform", "darwin"), \
+                mock.patch.object(tracklist, "installed_browsers", return_value=["safari"]) as apps:
+            self.assertEqual(tracklist.detect_browsers(), ["safari"])
+        apps.assert_called_once_with(tracklist.APP_DIRS)
+
+
 class BrowserTest(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()

@@ -172,6 +172,42 @@ def installed_browsers(app_dirs):
     ]
 
 
+def browser_profile_dirs(platform, env, home):
+    if platform == "win32":
+        local = Path(env.get("LOCALAPPDATA") or home / "AppData" / "Local")
+        roaming = Path(env.get("APPDATA") or home / "AppData" / "Roaming")
+        return {
+            "chrome": [local / "Google" / "Chrome" / "User Data"],
+            "brave": [local / "BraveSoftware" / "Brave-Browser" / "User Data"],
+            "edge": [local / "Microsoft" / "Edge" / "User Data"],
+            "firefox": [roaming / "Mozilla" / "Firefox" / "Profiles"],
+            "vivaldi": [local / "Vivaldi" / "User Data"],
+            "opera": [roaming / "Opera Software" / "Opera Stable"],
+            "chromium": [local / "Chromium" / "User Data"],
+        }
+    config = Path(env.get("XDG_CONFIG_HOME") or home / ".config")
+    return {
+        "chrome": [config / "google-chrome"],
+        "brave": [config / "BraveSoftware" / "Brave-Browser"],
+        "edge": [config / "microsoft-edge"],
+        "firefox": [home / ".mozilla" / "firefox", home / "snap" / "firefox" / "common" / ".mozilla" / "firefox"],
+        "vivaldi": [config / "vivaldi"],
+        "opera": [config / "opera"],
+        "chromium": [config / "chromium", home / "snap" / "chromium" / "common" / "chromium"],
+    }
+
+
+def browsers_with_profile(platform, env, home):
+    profiles = browser_profile_dirs(platform, env, home)
+    return [name for name in BROWSERS if any(path.exists() for path in profiles.get(name, []))]
+
+
+def detect_browsers():
+    if sys.platform == "darwin":
+        return installed_browsers(APP_DIRS)
+    return browsers_with_profile(sys.platform, os.environ, Path.home())
+
+
 def pick_browser(candidates, read_cookies):
     denied = False
     for browser in candidates:
@@ -209,7 +245,7 @@ def current_browser():
     saved = load_config().get("browser")
     if saved:
         return saved
-    browser = pick_browser(installed_browsers(APP_DIRS), browser_cookies)
+    browser = pick_browser(detect_browsers(), browser_cookies)
     save_browser(browser)
     return browser
 
@@ -235,7 +271,7 @@ def signed_in_elsewhere(browser):
         read[candidate] = browser_cookies(candidate)
         return read[candidate]
 
-    others = [name for name in installed_browsers(APP_DIRS) if name != browser]
+    others = [name for name in detect_browsers() if name != browser]
     try:
         found = pick_browser(others, cookies_of)
     except SystemExit:
