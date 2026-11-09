@@ -59,7 +59,7 @@ tracklist was written and tested on macOS only. Windows and Linux support exists
 1. Install the tools. In PowerShell:
 
    ```powershell
-   winget install astral-sh.uv yt-dlp.yt-dlp Gyan.FFmpeg
+   winget install Git.Git astral-sh.uv yt-dlp.yt-dlp Gyan.FFmpeg
    ```
 
 2. Close the terminal and open a new one, so the new tools are found. Then install tracklist:
