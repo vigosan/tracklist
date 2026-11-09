@@ -31,7 +31,6 @@ def status_fields(state, now):
 
 
 PHASE_LABELS = {
-    "cookies": "Leyendo cookies de Brave...",
     "claims": "Pidiendo reclamaciones a Studio...",
     "video": "Pidiendo datos del video...",
     "probe": "Leyendo duracion del video...",
@@ -39,6 +38,8 @@ PHASE_LABELS = {
 
 
 def phase_label(phase):
+    if phase == "cookies":
+        return f"Leyendo cookies de {tracklist.browser_name().capitalize()}..."
     return PHASE_LABELS.get(phase, "")
 
 

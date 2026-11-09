@@ -173,32 +173,41 @@ def refresh_headers(headers, cookies, timestamp):
     }
 
 
-def brave_cookies():
+def browser_name(env=os.environ):
+    return env.get("TRACKLIST_BROWSER") or "brave"
+
+
+def browser_cookies():
+    browser = browser_name()
     with tempfile.TemporaryDirectory() as tmp:
         jar_path = Path(tmp) / "cookies.txt"
         command = [
             "yt-dlp", "--quiet", "--no-warnings", "--ignore-errors", "--skip-download",
-            "--cookies-from-browser", "brave", "--cookies", str(jar_path),
+            "--cookies-from-browser", browser, "--cookies", str(jar_path),
             "https://www.youtube.com/robots.txt",
         ]
         try:
             result = subprocess.run(command, capture_output=True, text=True)
         except FileNotFoundError:
-            sys.exit("yt-dlp no esta instalado (brew install yt-dlp), o usa --save-session.")
+            sys.exit("yt-dlp no esta instalado (pip install yt-dlp), o usa --save-session.")
         if not jar_path.exists():
             sys.exit(
-                "No se pudieron leer las cookies de Brave:\n"
+                f"No se pudieron leer las cookies de {browser}:\n"
                 f"{result.stderr.strip()[-300:]}\n"
-                "Alternativa manual: captura un cURL y usa --save-session."
+                "Usa otro navegador con TRACKLIST_BROWSER=firefox (chrome, edge...), "
+                "o captura un cURL y usa --save-session."
             )
         return parse_cookie_file(jar_path)
 
 
 def fresh_session():
     session = load_session()
-    cookies = brave_cookies()
+    cookies = browser_cookies()
     if "SAPISID" not in cookies:
-        sys.exit("Brave no tiene sesion de YouTube iniciada: entra en studio.youtube.com y reintenta.")
+        sys.exit(
+            f"{browser_name()} no tiene sesion de YouTube iniciada: "
+            "entra en studio.youtube.com y reintenta."
+        )
     session["headers"] = refresh_headers(session["headers"], cookies, int(time.time()))
     return session
 
@@ -216,7 +225,7 @@ def post(endpoint, payload, session):
     except urllib.error.HTTPError as error:
         if error.code in (401, 403):
             sys.exit(
-                "YouTube rechazo la sesion: entra en studio.youtube.com con Brave"
+                f"YouTube rechazo la sesion: entra en studio.youtube.com con {browser_name()}"
                 " y reintenta, o captura un cURL nuevo y usa --save-session."
             )
         sys.exit(f"Error HTTP {error.code}: {error.read()[:300].decode(errors='replace')}")
@@ -429,7 +438,7 @@ def probe_duration(video_id):
     command = [
         "yt-dlp", "--quiet", "--no-warnings", "--skip-download",
         "--print", "duration",
-        "--cookies-from-browser", "brave",
+        "--cookies-from-browser", browser_name(),
         f"https://www.youtube.com/watch?v={video_id}",
     ]
     result = subprocess.run(command, capture_output=True, text=True)
@@ -446,7 +455,7 @@ def download_audio(video_id, directory):
     target = audio_path(video_id)
     command = [
         "yt-dlp", "--quiet", "--no-warnings", "-x", "--audio-format", "mp3",
-        "--cookies-from-browser", "brave",
+        "--cookies-from-browser", browser_name(),
         "-o", str(target.with_suffix(".%(ext)s")),
         f"https://www.youtube.com/watch?v={video_id}",
     ]

@@ -92,7 +92,7 @@ def wait_for_claims(video_id, report, sleep=time.sleep, clock=time.monotonic):
         session, entries = tracklist.try_claims(video_id)
         if session is None:
             sys.exit(
-                "Sin sesion de Studio: entra en studio.youtube.com con Brave y vuelve a lanzar "
+                f"Sin sesion de Studio: entra en studio.youtube.com con {tracklist.browser_name()} y vuelve a lanzar "
                 f"el mismo comando (el video ya esta subido: https://youtu.be/{video_id})"
             )
         counts.append(len(entries))

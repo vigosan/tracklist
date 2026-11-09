@@ -3,6 +3,7 @@ import contextlib
 import hashlib
 import io
 import importlib.util
+import os
 import subprocess
 import tempfile
 import unittest
@@ -449,7 +450,8 @@ class FinishedElapsedTest(unittest.TestCase):
 
 class PhaseAndStateTest(unittest.TestCase):
     def test_phase_labels(self):
-        self.assertEqual(recognize_tui.phase_label("cookies"), "Leyendo cookies de Brave...")
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(recognize_tui.phase_label("cookies"), "Leyendo cookies de Brave...")
         self.assertEqual(recognize_tui.phase_label("claims"), "Pidiendo reclamaciones a Studio...")
         self.assertEqual(recognize_tui.phase_label("video"), "Pidiendo datos del video...")
         self.assertEqual(recognize_tui.phase_label("recognizing"), "")
@@ -690,6 +692,11 @@ class ProbeDurationTest(unittest.TestCase):
         self.assertEqual(duration, 3552)
         self.assertIn("--print", command)
         self.assertIn("https://www.youtube.com/watch?v=vid12345678", command)
+
+    def test_reads_cookies_from_the_browser_the_user_chose(self):
+        with mock.patch.dict(os.environ, {"TRACKLIST_BROWSER": "firefox"}):
+            command = self.run_probe("3552\n")[1]
+        self.assertEqual(command[command.index("--cookies-from-browser") + 1], "firefox")
 
     def test_a_fractional_duration_is_truncated_to_whole_seconds(self):
         self.assertEqual(self.run_probe("3552.44\n")[0], 3552)
@@ -1356,6 +1363,48 @@ class AudioCacheDirTest(unittest.TestCase):
     def test_linux_defaults_to_dot_cache(self):
         path = tracklist.audio_cache_dir("linux", {}, self.home)
         self.assertEqual(path, self.home / ".cache" / "tracklist")
+
+
+class BrowserNameTest(unittest.TestCase):
+    def test_defaults_to_brave_so_existing_setups_keep_working(self):
+        self.assertEqual(tracklist.browser_name({}), "brave")
+
+    def test_the_environment_picks_the_browser_whose_cookies_hold_the_youtube_session(self):
+        self.assertEqual(tracklist.browser_name({"TRACKLIST_BROWSER": "chrome"}), "chrome")
+
+    def test_an_empty_value_falls_back_to_the_default(self):
+        self.assertEqual(tracklist.browser_name({"TRACKLIST_BROWSER": ""}), "brave")
+
+    def test_the_cookies_phase_names_the_chosen_browser(self):
+        with mock.patch.dict(os.environ, {"TRACKLIST_BROWSER": "firefox"}):
+            self.assertEqual(recognize_tui.phase_label("cookies"), "Leyendo cookies de Firefox...")
+
+
+class BrowserCookiesTest(unittest.TestCase):
+    def run_cookies(self, run):
+        with mock.patch.dict(os.environ, {"TRACKLIST_BROWSER": "edge"}), \
+                mock.patch.object(tracklist.subprocess, "run", side_effect=run):
+            return tracklist.browser_cookies()
+
+    def test_a_missing_yt_dlp_points_to_installing_it_without_assuming_homebrew(self):
+        def run(command, **kwargs):
+            raise FileNotFoundError
+
+        with self.assertRaises(SystemExit) as raised:
+            self.run_cookies(run)
+        self.assertNotIn("brew", str(raised.exception))
+        self.assertIn("yt-dlp", str(raised.exception))
+
+    def test_a_cookie_read_failure_names_the_chosen_browser_and_how_to_change_it(self):
+        def run(command, **kwargs):
+            self.assertEqual(command[command.index("--cookies-from-browser") + 1], "edge")
+            return mock.Mock(stderr="boom")
+
+        with self.assertRaises(SystemExit) as raised:
+            self.run_cookies(run)
+        message = str(raised.exception)
+        self.assertIn("edge", message)
+        self.assertIn("TRACKLIST_BROWSER", message)
 
 
 class ClipboardCommandTest(unittest.TestCase):
