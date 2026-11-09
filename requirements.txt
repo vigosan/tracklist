@@ -1,0 +1,6 @@
+yt-dlp
+shazamio==0.4.0.1
+audioop-lts; python_version >= "3.13"
+textual
+google-api-python-client
+google-auth-oauthlib
